@@ -9,6 +9,11 @@
  * Everything goes through the public API, so this exercises the same paths a
  * real integration would.
  */
+import { loadRootEnv } from "@tierbase/shared";
+
+// Load the monorepo .env before anything reads process.env.
+loadRootEnv();
+
 import { createPrismaClient } from "@tierbase/database";
 import { buildServer } from "../apps/api/src/server";
 

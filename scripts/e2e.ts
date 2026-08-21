@@ -7,6 +7,11 @@
  *   npm run e2e
  */
 import { createHmac } from "node:crypto";
+import { loadRootEnv } from "@tierbase/shared";
+
+// Load the monorepo .env before anything reads process.env.
+loadRootEnv();
+
 import { expireIncompleteSubscriptions } from "../packages/billing/src";
 import { buildServer } from "../apps/api/src/server";
 

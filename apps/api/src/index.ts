@@ -1,3 +1,8 @@
+import { loadRootEnv } from "@tierbase/shared";
+
+// Load the monorepo .env before anything reads process.env.
+loadRootEnv();
+
 import { buildServer } from "./server";
 
 async function main(): Promise<void> {

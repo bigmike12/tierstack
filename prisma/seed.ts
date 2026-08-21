@@ -5,6 +5,11 @@
  * stable slug or code.
  */
 import { createHash, randomBytes } from "node:crypto";
+import { loadRootEnv } from "@tierbase/shared";
+
+// Load the monorepo .env before anything reads process.env.
+loadRootEnv();
+
 import { createPrismaClient } from "@tierbase/database";
 import { encryptCredentials } from "@tierbase/payments-core";
 import { newId } from "@tierbase/shared";
