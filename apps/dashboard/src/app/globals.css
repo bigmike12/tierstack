@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Brand-neutral palette. The product name and visual identity are not decided,
+ * so these are deliberately plain: a near-neutral slate with one accent. When
+ * branding lands, this block is the only file that has to change.
+ */
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 215 25% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 12%;
+    --muted: 210 16% 95%;
+    --muted-foreground: 215 12% 44%;
+    --border: 214 18% 89%;
+    --input: 214 18% 89%;
+    --ring: 215 25% 27%;
+    --primary: 215 28% 17%;
+    --primary-foreground: 210 20% 98%;
+    --secondary: 210 16% 95%;
+    --secondary-foreground: 215 25% 20%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 58% 32%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 84% 42%;
+    --warning-foreground: 0 0% 100%;
+    --radius: 0.6rem;
+  }
+
+  .dark {
+    --background: 220 24% 8%;
+    --foreground: 210 20% 94%;
+    --card: 220 22% 11%;
+    --card-foreground: 210 20% 94%;
+    --muted: 220 18% 16%;
+    --muted-foreground: 215 14% 62%;
+    --border: 220 16% 20%;
+    --input: 220 16% 20%;
+    --ring: 210 20% 80%;
+    --primary: 210 20% 94%;
+    --primary-foreground: 220 24% 10%;
+    --secondary: 220 18% 16%;
+    --secondary-foreground: 210 20% 92%;
+    --destructive: 0 62% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 46% 44%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 76% 54%;
+    --warning-foreground: 220 24% 10%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}

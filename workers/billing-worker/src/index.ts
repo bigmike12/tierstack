@@ -1,11 +1,23 @@
 import { Queue, Worker, type Job } from "bullmq";
 import { createPrismaClient } from "@billing-platform/database";
 import Redis from "ioredis";
-import { runGraceExpiry, runIdempotencySweep, runRenewals, runSessionSweep, type JobContext } from "./jobs";
+import {
+  runGraceExpiry,
+  runIdempotencySweep,
+  runIncompleteExpiry,
+  runRenewals,
+  runSessionSweep,
+  type JobContext,
+} from "./jobs";
 
 const QUEUE_NAME = "billing";
 
-type JobName = "renewals" | "grace-expiry" | "idempotency-sweep" | "session-sweep";
+type JobName =
+  | "renewals"
+  | "grace-expiry"
+  | "incomplete-expiry"
+  | "idempotency-sweep"
+  | "session-sweep";
 
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
@@ -35,6 +47,7 @@ async function main(): Promise<void> {
   // that finds nothing to do costs one indexed query.
   await queue.upsertJobScheduler("renewals", { pattern: "*/5 * * * *" }, { name: "renewals" });
   await queue.upsertJobScheduler("grace-expiry", { pattern: "*/10 * * * *" }, { name: "grace-expiry" });
+  await queue.upsertJobScheduler("incomplete-expiry", { pattern: "*/15 * * * *" }, { name: "incomplete-expiry" });
   await queue.upsertJobScheduler("idempotency-sweep", { pattern: "0 * * * *" }, { name: "idempotency-sweep" });
   await queue.upsertJobScheduler("session-sweep", { pattern: "0 3 * * *" }, { name: "session-sweep" });
 
@@ -46,6 +59,8 @@ async function main(): Promise<void> {
           return runRenewals(ctx);
         case "grace-expiry":
           return runGraceExpiry(ctx);
+        case "incomplete-expiry":
+          return runIncompleteExpiry(ctx);
         case "idempotency-sweep":
           return runIdempotencySweep(ctx);
         case "session-sweep":

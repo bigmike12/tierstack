@@ -3,6 +3,7 @@ import { applyPaymentResult, instantiateProvider } from "@billing-platform/billi
 import type { PrismaClient } from "@billing-platform/database";
 import { BillingError, newId, success } from "@billing-platform/shared";
 import type { FastifyInstance } from "fastify";
+import { requireOrganization } from "../context";
 import type { AppConfig } from "../env";
 import type { RedisClient } from "../lib/redis";
 
@@ -155,6 +156,39 @@ export function registerWebhookRoutes(
       return success({ received: true, duplicate: false, eventId: record.id }, request.requestId);
     });
   }
+}
+
+/** Read model for the dashboard's webhook log. */
+export function registerWebhookEventRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+  app.get("/v1/webhook-events", async (request) => {
+    const organizationId = requireOrganization(request);
+    const query = request.query as { status?: string; provider?: string; limit?: string };
+
+    const events = await prisma.webhookEvent.findMany({
+      where: {
+        organizationId,
+        ...(query.status ? { status: query.status as never } : {}),
+        ...(query.provider ? { provider: query.provider as never } : {}),
+      },
+      orderBy: { receivedAt: "desc" },
+      take: Math.min(Number(query.limit ?? 50), 200),
+      // The raw payload is deliberately excluded from the list view; it can
+      // carry provider detail that has no business being rendered in a table.
+      select: {
+        id: true,
+        provider: true,
+        providerEventId: true,
+        eventType: true,
+        signatureVerified: true,
+        status: true,
+        processingAttempts: true,
+        errorMessage: true,
+        receivedAt: true,
+        processedAt: true,
+      },
+    });
+    return success(events, request.requestId);
+  });
 }
 
 /**

@@ -15,11 +15,12 @@ import { registerBillingSettingsRoutes } from "./routes/billing-settings";
 import { registerCatalogueRoutes } from "./routes/catalogue";
 import { registerCustomerRoutes } from "./routes/customers";
 import { registerInvoiceRoutes } from "./routes/invoices";
+import { registerMetricsRoutes } from "./routes/metrics";
 import { registerMockRoutes } from "./routes/mock";
 import { registerOrganizationRoutes } from "./routes/organizations";
 import { registerPaymentProviderRoutes } from "./routes/payment-providers";
 import { registerSubscriptionRoutes } from "./routes/subscriptions";
-import { registerWebhookRoutes } from "./routes/webhooks";
+import { registerWebhookEventRoutes, registerWebhookRoutes } from "./routes/webhooks";
 
 export interface BuiltServer {
   app: FastifyInstance;
@@ -101,8 +102,10 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
   registerCustomerRoutes(app, prisma);
   registerSubscriptionRoutes(app, prisma, config, redis);
   registerInvoiceRoutes(app, prisma, config, redis);
+  registerMetricsRoutes(app, prisma);
   registerMockRoutes(app, prisma, config, redis);
   registerWebhookRoutes(app, prisma, config, redis);
+  registerWebhookEventRoutes(app, prisma);
 
   app.addHook("onClose", async () => {
     await prisma.$disconnect();

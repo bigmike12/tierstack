@@ -8,6 +8,7 @@ const policy: DunningPolicy = {
   accessDuringGracePeriod: "FULL_ACCESS",
   failureAction: "MARK_UNPAID",
   invoiceDueDays: 0,
+  incompleteExpiryHours: 24,
 };
 
 const failedAt = new Date("2026-08-21T09:00:00Z");

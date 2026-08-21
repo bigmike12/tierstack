@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canTransition, hasServiceAccess, isTerminal, transition } from "./state-machine";
+import { allowedTransitions, canTransition, hasServiceAccess, isTerminal, transition } from "./state-machine";
 
 describe("subscription state machine", () => {
   it("walks the documented failure path", () => {
@@ -31,6 +31,30 @@ describe("subscription state machine", () => {
   it("records the reason for the change", () => {
     const result = transition("ACTIVE", "PAST_DUE", "payment_failed");
     expect(result).toEqual({ from: "ACTIVE", to: "PAST_DUE", reason: "payment_failed" });
+  });
+
+  it("keeps a never-paid subscription out of the lapsed-customer states", () => {
+    expect(canTransition("INCOMPLETE", "ACTIVE")).toBe(true);
+    expect(canTransition("INCOMPLETE", "CANCELED")).toBe(true);
+    expect(canTransition("INCOMPLETE", "EXPIRED")).toBe(true);
+    // PAST_DUE and GRACE_PERIOD both describe a paying customer who lapsed.
+    expect(canTransition("INCOMPLETE", "PAST_DUE")).toBe(false);
+    expect(canTransition("INCOMPLETE", "GRACE_PERIOD")).toBe(false);
+    expect(canTransition("INCOMPLETE", "UNPAID")).toBe(false);
+    expect(allowedTransitions("INCOMPLETE")).toEqual(["ACTIVE", "CANCELED", "EXPIRED"]);
+  });
+
+  it("grants no service on a subscription that has never been paid", () => {
+    // The grace policy is irrelevant here: there is nothing to be gracious about.
+    expect(hasServiceAccess("INCOMPLETE", "FULL_ACCESS")).toEqual({ access: false, restricted: false });
+    expect(hasServiceAccess("INCOMPLETE", "RESTRICTED_ACCESS")).toEqual({ access: false, restricted: false });
+    expect(hasServiceAccess("INCOMPLETE", "NO_ACCESS")).toEqual({ access: false, restricted: false });
+  });
+
+  it("refuses to move an unpaid subscription into a grace period", () => {
+    expect(() => transition("INCOMPLETE", "GRACE_PERIOD", "payment_failed")).toThrow(
+      /cannot move from INCOMPLETE to GRACE_PERIOD/
+    );
   });
 
   it("applies the organization's grace-period access policy", () => {

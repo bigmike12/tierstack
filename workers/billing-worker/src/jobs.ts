@@ -1,6 +1,7 @@
 import {
   attemptInvoicePayment,
   expireGracePeriods,
+  expireIncompleteSubscriptions,
   renewSubscription,
   type ProviderFactoryDeps,
 } from "@billing-platform/billing";
@@ -87,6 +88,26 @@ export async function runGraceExpiry(ctx: JobContext, now = new Date()) {
     ctx.log("grace periods closed", { count: results.length });
   }
   return results;
+}
+
+/**
+ * Expires subscriptions whose first payment never arrived, and voids the
+ * invoice that went with them, so an abandoned checkout does not sit on the
+ * books as receivable forever.
+ */
+export async function runIncompleteExpiry(ctx: JobContext, now = new Date()) {
+  const organizations = await ctx.prisma.subscription.findMany({
+    where: { status: "INCOMPLETE" },
+    select: { organizationId: true },
+    distinct: ["organizationId"],
+  });
+
+  const expired: string[] = [];
+  for (const { organizationId } of organizations) {
+    expired.push(...(await expireIncompleteSubscriptions(ctx.prisma, organizationId, now)));
+  }
+  if (expired.length > 0) ctx.log("abandoned checkouts expired", { count: expired.length });
+  return { expired: expired.length };
 }
 
 /** Idempotency records are short-lived by design; this reclaims the space. */

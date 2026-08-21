@@ -15,6 +15,8 @@ const updateSchema = z
     accessDuringGracePeriod: z.enum(["FULL_ACCESS", "RESTRICTED_ACCESS", "NO_ACCESS"]).optional(),
     failureAction: z.enum(["MARK_UNPAID", "CANCEL", "PAUSE"]).optional(),
     invoiceDueDays: z.number().int().min(0).max(365).optional(),
+    /** 0 disables automatic expiry of abandoned first checkouts. */
+    incompleteExpiryHours: z.number().int().min(0).max(24 * 30).optional(),
     defaultCurrency: z.string().length(3).optional(),
     autoCollect: z.boolean().optional(),
   })

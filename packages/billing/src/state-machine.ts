@@ -1,6 +1,7 @@
 import { BillingError } from "@billing-platform/shared";
 
 export type SubscriptionStatus =
+  | "INCOMPLETE"
   | "TRIALING"
   | "ACTIVE"
   | "PAST_DUE"
@@ -16,6 +17,9 @@ export type SubscriptionStatus =
  * move that is not in this table and records why the move happened.
  */
 const TRANSITIONS: Record<SubscriptionStatus, SubscriptionStatus[]> = {
+  // A subscription that has never been paid cannot enter PAST_DUE or a grace
+  // period — both of those describe a paying customer who has lapsed.
+  INCOMPLETE: ["ACTIVE", "CANCELED", "EXPIRED"],
   TRIALING: ["ACTIVE", "PAST_DUE", "PAUSED", "CANCELED", "EXPIRED"],
   ACTIVE: ["ACTIVE", "PAST_DUE", "PAUSED", "CANCELED", "EXPIRED"],
   PAST_DUE: ["GRACE_PERIOD", "ACTIVE", "UNPAID", "PAUSED", "CANCELED"],
@@ -26,7 +30,7 @@ const TRANSITIONS: Record<SubscriptionStatus, SubscriptionStatus[]> = {
   EXPIRED: [],
 };
 
-/** States in which the customer is holding a live subscription. */
+/** States in which the customer is holding a live, paid-for subscription. */
 export const LIVE_STATUSES: SubscriptionStatus[] = [
   "TRIALING",
   "ACTIVE",
@@ -83,6 +87,10 @@ export function hasServiceAccess(
   accessDuringGracePeriod: "FULL_ACCESS" | "RESTRICTED_ACCESS" | "NO_ACCESS"
 ): { access: boolean; restricted: boolean } {
   switch (status) {
+    // Never paid, so never entitled — the grace policy does not apply, because
+    // there is nothing to be gracious about yet.
+    case "INCOMPLETE":
+      return { access: false, restricted: false };
     case "TRIALING":
     case "ACTIVE":
       return { access: true, restricted: false };

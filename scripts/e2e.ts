@@ -7,6 +7,7 @@
  *   npm run e2e
  */
 import { createHmac } from "node:crypto";
+import { expireIncompleteSubscriptions } from "../packages/billing/src";
 import { buildServer } from "../apps/api/src/server";
 
 type Json = Record<string, any>;
@@ -243,7 +244,8 @@ async function main(): Promise<void> {
   check("customer was created on the fly", created.body.data?.subscription?.customer?.externalId === "user_83921");
   check("first invoice generated", Boolean(firstInvoiceId));
   check("invoice total matches the price", created.body.data?.amountDue === 1_000_000);
-  check("subscription is not active before payment", created.body.data?.subscription?.status === "PAST_DUE");
+  check("subscription is not active before payment", created.body.data?.subscription?.status === "INCOMPLETE",
+    created.body.data?.subscription?.status);
   check("hosted checkout opened", typeof created.body.data?.payment?.checkoutUrl === "string");
   check("payment is pending, not assumed", created.body.data?.payment?.status === "PENDING");
 
@@ -372,20 +374,17 @@ async function main(): Promise<void> {
   check("declined payment recorded", failing.body.data?.payment?.status === "FAILED", failing.body.data?.payment);
 
   const afterFailure = await call("GET", `/v1/subscriptions/${failingSubId}`, { headers: asKey() });
-  check("subscription enters the grace period", afterFailure.body.data.status === "GRACE_PERIOD", afterFailure.body.data.status);
+  check("a declined first payment leaves the subscription INCOMPLETE", afterFailure.body.data.status === "INCOMPLETE", afterFailure.body.data.status);
 
-  const graceDays = Math.round(
-    (new Date(afterFailure.body.data.gracePeriodEnd).getTime() -
-      new Date(afterFailure.body.data.gracePeriodStart).getTime()) /
-      86_400_000
-  );
-  check("grace period is the configured 3 days, not a hard-coded default", graceDays === 3, { graceDays });
-  check("the policy in force is frozen onto the subscription", afterFailure.body.data.gracePolicy?.failureAction === "MARK_UNPAID");
+  const abandoned = await call("POST", `/v1/subscriptions/${failingSubId}/renew`, { headers: asKey(), payload: {} });
+  check("an unpaid subscription cannot open another period", abandoned.body.error?.code === "INVALID_STATE_TRANSITION");
 
   const transitions = await call("GET", `/v1/subscriptions/${failingSubId}/transitions`, { headers: asKey() });
   const path = transitions.body.data.map((t: Json) => t.toStatus);
-  check("a first payment that never settles goes straight into the grace period",
-    JSON.stringify(path) === JSON.stringify(["PAST_DUE", "GRACE_PERIOD"]), path);
+  check("a never-paid subscription stays INCOMPLETE instead of entering a grace period",
+    JSON.stringify(path) === JSON.stringify(["INCOMPLETE"]), path);
+  check("no grace period is opened for a customer who never paid",
+    afterFailure.body.data.gracePeriodEnd === null && afterFailure.body.data.gracePolicy === null);
 
   const retry = await call("POST", `/v1/invoices/${failingInvoiceId}/pay`, {
     headers: asKey({ "idempotency-key": `retry-${stamp}` }),
@@ -415,11 +414,65 @@ async function main(): Promise<void> {
     JSON.stringify(renewalPath.slice(-3)) === JSON.stringify(["ACTIVE", "PAST_DUE", "GRACE_PERIOD"]), renewalPath);
 
   const afterRenewalFailure = await call("GET", `/v1/subscriptions/${failingSubId}`, { headers: asKey() });
-  check("a second grace period opens with the same configured length",
-    Math.round(
-      (new Date(afterRenewalFailure.body.data.gracePeriodEnd).getTime() -
-        new Date(afterRenewalFailure.body.data.gracePeriodStart).getTime()) / 86_400_000
-    ) === 3);
+  const graceDays = Math.round(
+    (new Date(afterRenewalFailure.body.data.gracePeriodEnd).getTime() -
+      new Date(afterRenewalFailure.body.data.gracePeriodStart).getTime()) / 86_400_000
+  );
+  check("the grace period is the configured 3 days, not a hard-coded default", graceDays === 3, { graceDays });
+  check("the policy in force is frozen onto the subscription",
+    afterRenewalFailure.body.data.gracePolicy?.failureAction === "MARK_UNPAID");
+
+  const recoverRenewal = await call("POST", `/v1/invoices/${renewalFailure.body.data.invoiceId}/pay`, {
+    headers: asKey(),
+    payload: { metadata: { mockOutcome: "SUCCESS" } },
+  });
+  check("a lapsed subscription recovers out of the grace period", recoverRenewal.body.data?.status === "SUCCEEDED");
+  const afterRecovery = await call("GET", `/v1/subscriptions/${failingSubId}`, { headers: asKey() });
+  check("the grace window is cleared on recovery",
+    afterRecovery.body.data.status === "ACTIVE" && afterRecovery.body.data.gracePeriodEnd === null);
+
+  // -- 12b. Abandoned checkout ----------------------------------------------
+  section("12b. Abandoned first checkout");
+
+  const abandonedSub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `abandon-${stamp}` }),
+    payload: {
+      customer: { externalId: "user_ghost", email: "ghost@example.test" },
+      priceId: "pro_monthly_ngn",
+    },
+  });
+  const ghostId = abandonedSub.body.data.subscription.id;
+  const ghostInvoiceId = abandonedSub.body.data.invoiceId;
+  check("an abandoned checkout leaves the subscription INCOMPLETE",
+    abandonedSub.body.data.subscription.status === "INCOMPLETE");
+
+  // Age it past the organization's configured expiry window.
+  await prisma.subscription.update({
+    where: { id: ghostId },
+    data: { createdAt: new Date(Date.now() - 48 * 3_600_000) },
+  });
+  const expired = await expireIncompleteSubscriptions(prisma, organizationId);
+  check("the abandoned subscription is expired", expired.includes(ghostId), expired);
+
+  const ghost = await call("GET", `/v1/subscriptions/${ghostId}`, { headers: asKey() });
+  check("its status is EXPIRED, never UNPAID", ghost.body.data.status === "EXPIRED");
+
+  const ghostInvoice = await call("GET", `/v1/invoices/${ghostInvoiceId}`, { headers: asKey() });
+  check("its invoice is voided rather than left as receivable", ghostInvoice.body.data.status === "VOID");
+  check("nothing is owed on it", ghostInvoice.body.data.amountDue === 0);
+
+  await call("PUT", "/v1/billing-settings", { headers: asUser(), payload: { incompleteExpiryHours: 0 } });
+  const secondGhost = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `abandon2-${stamp}` }),
+    payload: { customer: { externalId: "user_ghost2", email: "ghost2@example.test" }, priceId: "pro_monthly_ngn" },
+  });
+  await prisma.subscription.update({
+    where: { id: secondGhost.body.data.subscription.id },
+    data: { createdAt: new Date(Date.now() - 48 * 3_600_000) },
+  });
+  const noneExpired = await expireIncompleteSubscriptions(prisma, organizationId);
+  check("expiry can be switched off by the developer", noneExpired.length === 0, noneExpired);
+  await call("PUT", "/v1/billing-settings", { headers: asUser(), payload: { incompleteExpiryHours: 24 } });
 
   // -- 13. Webhooks ----------------------------------------------------------
   section("13. Webhook verification and de-duplication");

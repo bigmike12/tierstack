@@ -186,6 +186,9 @@ model BillingSettings {
   accessDuringGracePeriod GracePeriodAccess   @default(FULL_ACCESS)
   failureAction          DunningFailureAction @default(MARK_UNPAID)
   invoiceDueDays         Int                  @default(0)
+  /// How long an unpaid first invoice keeps its subscription alive before the
+  /// abandoned checkout is expired. Zero disables automatic expiry.
+  incompleteExpiryHours  Int                  @default(24)
   defaultCurrency        String               @default("NGN")
   /// Collect payment automatically when an invoice is finalized.
   autoCollect            Boolean              @default(true)
@@ -411,6 +414,9 @@ model PaymentMethod {
 // ---------------------------------------------------------------------------
 
 enum SubscriptionStatus {
+  /// Created, first invoice open, never yet paid. Distinct from PAST_DUE so a
+  /// subscriber who has never paid is never mistaken for one who has lapsed.
+  INCOMPLETE
   TRIALING
   ACTIVE
   PAST_DUE

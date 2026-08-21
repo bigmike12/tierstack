@@ -14,9 +14,10 @@ not the source of truth for anything.
 
 ## What is built
 
-This repository implements **steps 1–8 of the build order**: the billing core
-and the mock payment rail. It is a working system, not a scaffold — the flows
-below run end to end against a real database.
+This repository implements **steps 1–8 of the build order** plus the dashboard
+shell: the billing core, the mock payment rail, and a working operator UI on top
+of them. It is a working system, not a scaffold — the flows below run end to end
+against a real database.
 
 | Area | Status |
 | --- | --- |
@@ -32,8 +33,9 @@ below run end to end against a real database.
 | Mock payment provider (checkout, tokenization, recurring, refunds, webhooks) | Complete |
 | Webhook intake with signature verification and de-duplication | Complete |
 | Idempotency on money-moving endpoints | Complete |
-| Background worker (renewals, grace expiry, sweeps) | Complete |
+| Background worker (renewals, grace expiry, abandoned-checkout expiry, sweeps) | Complete |
 | Audit logging, secret redaction, tenant isolation | Complete |
+| Dashboard: auth, section-57 navigation, and every page with an API behind it | Complete |
 
 **Deliberately not built yet** — and, importantly, not faked:
 
@@ -42,7 +44,7 @@ below run end to end against a real database.
 | Usage metering & entitlement engine (phase 2) | Schema exists. Subscribing to a `USAGE_METERED` or `HYBRID` price returns `NOT_IMPLEMENTED` rather than issuing an invoice that silently omits metered charges. |
 | Paystack / Monnify / Flutterwave adapters (phase 3) | A configuration can be stored, but instantiating the adapter returns `NOT_IMPLEMENTED` and its capabilities report as `null`. |
 | Automated dunning retries (phase 4) | Grace periods open and close on the developer's configured policy; the *scheduled* retry ladder is not yet wired. Retry today is `POST /v1/invoices/:id/pay`. |
-| Dashboard UI, customer portal, SDKs, `/llms.txt` (phases 5–6) | Not present. The API they would sit on is. |
+| Customer portal, TypeScript/React SDKs, `/llms.txt` (phase 5) | Not present. The API they would sit on is. |
 | Coupons, referrals, credit ledger (phase 6) | Schema exists; no engine. |
 
 Any capability a provider does not have returns `UNSUPPORTED_PROVIDER_CAPABILITY`.
@@ -60,8 +62,14 @@ cp .env.example .env          # then fill in the two secrets, see below
 npm install
 npm run db:deploy             # apply migrations
 npm run db:seed               # organization, plans, mock provider, test API key
-npm run dev                   # API on http://localhost:4000
+npm run demo:data             # optional: subscribers across every billing state
+npm run dev                   # API :4000 · dashboard :3000 · worker
 ```
+
+`npm run dev` starts all three. To run them separately: `npm run dev:api`,
+`npm run dev:dashboard`, `npm run dev:worker`.
+
+The seed prints dashboard credentials — sign in at <http://localhost:3000>.
 
 Generate the two secrets before anything but local play:
 
@@ -70,7 +78,7 @@ openssl rand -base64 48   # SESSION_SECRET
 openssl rand -hex 32      # ENCRYPTION_KEY  (exactly 64 hex characters)
 ```
 
-`npm run db:seed` prints a `sk_test_...` key once. Then:
+`npm run db:seed` also prints a `sk_test_...` key once. Then:
 
 ```bash
 curl -s http://localhost:4000/v1/plans -H "Authorization: Bearer sk_test_..."
@@ -79,9 +87,9 @@ curl -s http://localhost:4000/v1/plans -H "Authorization: Bearer sk_test_..."
 ### Verify the whole thing
 
 ```bash
-npm test        # 88 unit tests: money, intervals, proration, state machine,
+npm test        # 91 unit tests: money, intervals, proration, state machine,
                 # grace policy, routing, capabilities, mock rail, idempotency
-npm run e2e     # 97 end-to-end checks against real PostgreSQL + Redis
+npm run e2e     # 106 end-to-end checks against real PostgreSQL + Redis
 ```
 
 `npm run e2e` walks the complete lifecycle: create an organization, configure a
@@ -89,8 +97,40 @@ grace period, issue an API key, build a catalogue, auto-create a customer,
 subscribe, generate an invoice, pay it through the mock hosted checkout, store
 the payment method, renew on the stored method, upgrade with proration, change
 seats, take a declined payment into the grace period, recover it, process a
-signed webhook (and ignore its replay), and prove another tenant can see none of
-it.
+signed webhook (and ignore its replay), expire an abandoned checkout, and prove
+another tenant can see none of it.
+
+---
+
+## The dashboard
+
+`apps/dashboard` is a Next.js App Router application. All data is fetched
+server-side with the session cookie forwarded to the API, so no secret ever
+reaches the browser and there is no CORS credential dance. Mutations are server
+actions.
+
+The navigation is the full list from section 57. Sections whose engine exists are
+live; the four whose engine does not — Usage, Entitlements, Coupons, Referrals —
+say so plainly and name the phase, rather than rendering an empty table that
+reads as "no data yet".
+
+| Page | What it does |
+| --- | --- |
+| Overview | MRR, active subscriptions, revenue, payment success rate, outstanding, grace-period count, new customers, churn — computed straight from PostgreSQL, per currency |
+| Customers | List and detail: identity, subscriptions, invoices, stored payment methods |
+| Plans | Every plan with its prices, model, amount and interval |
+| Subscriptions | Filterable list; detail shows billing, customer, invoices and the full transition history |
+| Invoices | Filterable list; detail shows line items, totals and every payment attempt |
+| Payments | Every attempt in order, with failure codes |
+| Dunning | Your configured policy, who is in a grace period, and what happens when it ends |
+| Payment Providers | Configure and test rails; capabilities come from the adapter itself |
+| API Keys | Create (shown once), list, revoke |
+| Webhooks | Endpoint URLs and the received-event log with signature status |
+| Settings | Billing policy, organization, team |
+
+There is no marketing landing page. Everything public-facing depends on the
+product name and visual identity, which are still undecided — see the naming
+note at the top.
 
 ---
 
@@ -123,6 +163,7 @@ PostgreSQL       Provider adapters ──► Paystack · Monnify · Flutterwave 
 | `packages/payments/core` | `PaymentProvider` interface, capability model, credential encryption, payment router |
 | `packages/payments/mock` | A complete simulated rail: hosted checkout, tokenization, recurring charges, declines, refunds, signed webhooks |
 | `apps/api` | HTTP surface, authentication, tenancy, idempotency, mock checkout page, webhook intake |
+| `apps/dashboard` | Next.js App Router operator UI: auth, the section-57 navigation, and a page per capability |
 | `workers/billing-worker` | Renewals, grace expiry, idempotency and session sweeps (BullMQ) |
 
 ---
@@ -150,10 +191,14 @@ baked into the engine. When a payment fails, the organization's current policy i
 read *and frozen onto the subscription*, so changing settings later cannot
 retroactively shorten or extend a grace period that is already running.
 
-**A subscription that owes money is not ACTIVE.** A new subscription is created
-`PAST_DUE` (or `TRIALING`) and becomes `ACTIVE` only when a payment actually
-settles. Paid status is never granted on the strength of an unpaid invoice or a
-frontend redirect.
+**A subscription that owes money is not ACTIVE, and one that has never paid is
+not PAST_DUE either.** A new subscription starts `INCOMPLETE` (or `TRIALING`) and
+reaches `ACTIVE` only when a payment settles. `INCOMPLETE` is deliberately
+distinct from `PAST_DUE`: a customer who abandoned checkout has not lapsed, so
+they get no grace period, no dunning ladder chasing a payment method they never
+had, and no entitlements regardless of your grace-access policy. Abandoned
+checkouts expire on a configurable window and their invoice is voided, so they
+do not sit on the books as receivable.
 
 **Payment attempts are append-only.** Every retry writes a new row; nothing
 overwrites a previous attempt. The attempt id doubles as the payment reference,
@@ -223,6 +268,8 @@ POST   /v1/invoices/:id/pay         POST   /v1/subscriptions/:id/resume
 POST   /v1/invoices/:id/void        POST   /v1/subscriptions/:id/pause
 GET    /v1/payment-attempts         POST   /v1/subscriptions/:id/renew
                                     GET    /v1/subscriptions/:id/transitions
+
+GET    /v1/metrics/overview         GET    /v1/webhook-events
 
 POST   /webhooks/{mock,paystack,monnify,flutterwave}
 GET    /mock/checkout/:reference          (simulated hosted checkout page)
@@ -300,7 +347,9 @@ The Prisma client is generated in its Rust-free configuration (`engineType =
 
 ```
 billing-platform/
-├── apps/api/                  Fastify HTTP API
+├── apps/
+│   ├── api/                   Fastify HTTP API
+│   └── dashboard/             Next.js operator UI
 ├── packages/
 │   ├── shared/                money, intervals, errors, config, redaction
 │   ├── database/              Prisma client wrapper
@@ -318,11 +367,14 @@ billing-platform/
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | API with reload |
-| `npm run dev:worker` | Background worker |
+| `npm run dev` | API, dashboard and worker together |
+| `npm run dev:api` | API only, with reload |
+| `npm run dev:dashboard` | Dashboard only |
+| `npm run dev:worker` | Background worker only |
 | `npm run db:deploy` | Apply migrations |
 | `npm run db:migrate` | Create a migration from schema changes |
 | `npm run db:seed` | Seed an organization, catalogue, mock provider, API key |
+| `npm run demo:data` | Populate subscribers across every billing state |
 | `npm run db:reset` | Drop, re-migrate, re-seed |
 | `npm test` | Unit tests |
 | `npm run e2e` | Full lifecycle against real infrastructure |

@@ -11,6 +11,8 @@ export interface DunningPolicy {
   accessDuringGracePeriod: GracePeriodAccess;
   failureAction: DunningFailureAction;
   invoiceDueDays: number;
+  /** Hours an unpaid first invoice keeps its subscription alive. 0 disables. */
+  incompleteExpiryHours: number;
 }
 
 export interface GracePeriodWindow {

@@ -286,7 +286,7 @@ export async function applyPaymentResult(
     let subscriptionStatus: SubscriptionStatus | undefined;
     if (invoice.subscription && paidInvoice.status === "PAID") {
       const current = invoice.subscription.status as SubscriptionStatus;
-      if (["PAST_DUE", "GRACE_PERIOD", "UNPAID", "TRIALING"].includes(current)) {
+      if (["INCOMPLETE", "PAST_DUE", "GRACE_PERIOD", "UNPAID", "TRIALING"].includes(current)) {
         await applyTransition(tx, invoice.subscription.id, current, "ACTIVE", "payment_succeeded", {
           gracePeriodStart: null,
           gracePeriodEnd: null,
@@ -341,6 +341,13 @@ async function failInvoiceInTransaction(
 
   if (["CANCELED", "EXPIRED", "PAUSED", "UNPAID", "GRACE_PERIOD"].includes(current)) {
     return current;
+  }
+
+  // A first payment that never settled is not a lapse. The subscription stays
+  // INCOMPLETE — no grace period, no service, and no dunning ladder chasing a
+  // customer who never had a payment method.
+  if (current === "INCOMPLETE") {
+    return "INCOMPLETE";
   }
 
   if (current !== "PAST_DUE") {

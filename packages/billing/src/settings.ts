@@ -24,6 +24,7 @@ export async function loadDunningPolicy(
     accessDuringGracePeriod: settings.accessDuringGracePeriod as DunningPolicy["accessDuringGracePeriod"],
     failureAction: settings.failureAction as DunningPolicy["failureAction"],
     invoiceDueDays: settings.invoiceDueDays,
+    incompleteExpiryHours: settings.incompleteExpiryHours,
   };
 }
 

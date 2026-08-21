@@ -112,7 +112,9 @@ export async function createSubscription(
         ? { start, end: new Date(start.getTime() + trialDays * 86_400_000) }
         : computeBillingPeriod(start, priceInterval(snapshot), anchorDay);
 
-    const status: SubscriptionStatus = trialDays > 0 ? "TRIALING" : "PAST_DUE";
+    // Never PAST_DUE on creation: nothing has lapsed yet. INCOMPLETE says
+    // exactly what is true — the subscription exists and owes its first payment.
+    const status: SubscriptionStatus = trialDays > 0 ? "TRIALING" : "INCOMPLETE";
 
     const subscription = await tx.subscription.create({
       data: {
@@ -212,6 +214,12 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
     const status = subscription.status as SubscriptionStatus;
     if (["CANCELED", "EXPIRED", "PAUSED"].includes(status)) {
       throw new BillingError("INVALID_STATE_TRANSITION", `A ${status} subscription cannot renew.`);
+    }
+    if (status === "INCOMPLETE") {
+      throw new BillingError(
+        "INVALID_STATE_TRANSITION",
+        "This subscription has never been paid for. Collect its first invoice before opening another period."
+      );
     }
 
     if (subscription.cancelAtPeriodEnd) {
@@ -602,6 +610,49 @@ export async function pauseSubscription(
       { pausedAt: now }
     );
   });
+}
+
+/**
+ * Expires subscriptions whose first payment never arrived. Without this an
+ * abandoned checkout would leave an INCOMPLETE subscription and an open invoice
+ * on the books forever. The window is the organization's own setting; zero
+ * disables expiry entirely.
+ */
+export async function expireIncompleteSubscriptions(
+  prisma: PrismaClient,
+  organizationId: string,
+  now = new Date()
+) {
+  const policy = await loadDunningPolicy(prisma, organizationId);
+  if (policy.incompleteExpiryHours <= 0) return [];
+
+  const cutoff = new Date(now.getTime() - policy.incompleteExpiryHours * 3_600_000);
+  const stale = await prisma.subscription.findMany({
+    where: { organizationId, status: "INCOMPLETE", createdAt: { lte: cutoff } },
+    select: { id: true, status: true },
+  });
+
+  const expired: string[] = [];
+  for (const subscription of stale) {
+    await prisma.$transaction(async (tx) => {
+      await applyTransition(
+        tx,
+        subscription.id,
+        subscription.status as SubscriptionStatus,
+        "EXPIRED",
+        "first_payment_never_completed",
+        { endedAt: now }
+      );
+      // The invoice goes with it: nothing is owed on a subscription that never
+      // started, so leaving it OPEN would misstate receivables.
+      await tx.invoice.updateMany({
+        where: { subscriptionId: subscription.id, status: { in: ["DRAFT", "OPEN"] } },
+        data: { status: "VOID", voidedAt: now, amountDue: 0, nextRetryAt: null },
+      });
+    });
+    expired.push(subscription.id);
+  }
+  return expired;
 }
 
 /** Closes out grace periods that have run their course, per the frozen policy. */
