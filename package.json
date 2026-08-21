@@ -1,0 +1,47 @@
+{
+  "name": "billing-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure. Product name is not final; internal identifier is BILLING_PLATFORM.",
+  "packageManager": "npm@10.9.7",
+  "workspaces": [
+    "packages/*",
+    "packages/payments/*",
+    "apps/*",
+    "workers/*"
+  ],
+  "scripts": {
+    "postinstall": "prisma generate --schema prisma/schema.prisma",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "npm run dev --workspace @billing-platform/api",
+    "dev:worker": "npm run dev --workspace @billing-platform/billing-worker",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:reset": "prisma migrate reset --force --schema prisma/schema.prisma",
+    "db:seed": "tsx prisma/seed.ts",
+    "e2e": "tsx scripts/e2e.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prisma": "^6.2.1",
+    "tsx": "^4.19.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^6.19.3",
+    "@prisma/client": "^6.19.3",
+    "pg": "^8.23.0"
+  }
+}

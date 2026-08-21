@@ -1,0 +1,995 @@
+// Billing infrastructure platform — canonical data model.
+//
+// Design rules enforced throughout this schema:
+//   * The platform is the billing system of record. No provider object is
+//     canonical; provider identifiers are stored as references only.
+//   * Every business resource carries organizationId. Tenant isolation is a
+//     schema-level property, not a query convention.
+//   * Money is stored as an integer number of minor units alongside its
+//     currency. There is no Float or Decimal anywhere in this file.
+//   * Financial history is append-only: payment attempts, ledger entries,
+//     webhook events and audit logs are never mutated in place.
+
+generator client {
+  // Rust-free client: the query compiler ships as WASM and talks to PostgreSQL
+  // through the node-postgres driver adapter, so no platform-specific engine
+  // binary has to be downloaded at install time.
+  provider        = "prisma-client"
+  output          = "../packages/database/src/generated"
+  moduleFormat    = "cjs"
+  engineType      = "client"
+  runtime         = "nodejs"
+  previewFeatures = ["queryCompiler", "driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity and tenancy
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships OrganizationMember[]
+  sessions    Session[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+model Session {
+  id         String   @id
+  userId     String
+  tokenHash  String   @unique
+  userAgent  String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Organization {
+  id        String   @id
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members         OrganizationMember[]
+  apiKeys         ApiKey[]
+  billingSettings BillingSettings?
+  providerConfigs PaymentProviderConfig[]
+  plans           Plan[]
+  prices          Price[]
+  customers       Customer[]
+  paymentMethods  PaymentMethod[]
+  subscriptions   Subscription[]
+  invoices        Invoice[]
+  lineItems       InvoiceLineItem[]
+  paymentAttempts PaymentAttempt[]
+  usageMeters     UsageMeter[]
+  usageEvents     UsageEvent[]
+  entitlements    Entitlement[]
+  coupons         Coupon[]
+  redemptions     CouponRedemption[]
+  referralPrograms ReferralProgram[]
+  referrals       Referral[]
+  creditEntries   CreditLedgerEntry[]
+  webhookEvents   WebhookEvent[]
+  idempotencyKeys IdempotencyKey[]
+  portalSessions  PortalSession[]
+  auditLogs       AuditLog[]
+  invoiceCounters InvoiceCounter[]
+
+  @@map("organizations")
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model OrganizationMember {
+  id             String     @id
+  organizationId String
+  userId         String
+  role           MemberRole @default(MEMBER)
+  invitedAt      DateTime   @default(now())
+  acceptedAt     DateTime?
+  removedAt      DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+enum ApiEnvironment {
+  TEST
+  LIVE
+}
+
+enum ApiKeyType {
+  PUBLIC
+  SECRET
+}
+
+model ApiKey {
+  id             String         @id
+  organizationId String
+  name           String
+  type           ApiKeyType
+  environment    ApiEnvironment
+  /// Displayable, non-secret leading segment (e.g. "sk_test_a1b2"). Never the whole key.
+  prefix         String
+  /// SHA-256 of the full key. The raw secret is shown once at creation and never stored.
+  keyHash        String         @unique
+  permissions    String[]       @default([])
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdBy      String?
+  createdAt      DateTime       @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, environment])
+  @@index([prefix])
+  @@map("api_keys")
+}
+
+// ---------------------------------------------------------------------------
+// Organization billing policy
+// ---------------------------------------------------------------------------
+
+enum DunningFailureAction {
+  MARK_UNPAID
+  CANCEL
+  PAUSE
+}
+
+enum GracePeriodAccess {
+  FULL_ACCESS
+  RESTRICTED_ACCESS
+  NO_ACCESS
+}
+
+model BillingSettings {
+  id             String @id
+  organizationId String @unique
+
+  /// Developer-chosen grace period. There is no hard-coded default anywhere in
+  /// the engine; the engine reads this value at the moment a payment fails.
+  gracePeriodDays        Int                  @default(7)
+  maxRetryAttempts       Int                  @default(4)
+  /// Days after the initial failure on which each retry runs, e.g. [0,1,3,5].
+  retryIntervals         Int[]                @default([0, 1, 3, 5])
+  accessDuringGracePeriod GracePeriodAccess   @default(FULL_ACCESS)
+  failureAction          DunningFailureAction @default(MARK_UNPAID)
+  invoiceDueDays         Int                  @default(0)
+  defaultCurrency        String               @default("NGN")
+  /// Collect payment automatically when an invoice is finalized.
+  autoCollect            Boolean              @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("billing_settings")
+}
+
+enum PaymentProviderKind {
+  PAYSTACK
+  MONNIFY
+  FLUTTERWAVE
+  MOCK
+}
+
+model PaymentProviderConfig {
+  id             String              @id
+  organizationId String
+  provider       PaymentProviderKind
+  environment    ApiEnvironment
+  /// AES-256-GCM ciphertext of the provider credential set. Plaintext provider
+  /// secrets are never written to this table or to logs.
+  encryptedCredentials String
+  enabled        Boolean             @default(true)
+  isDefault      Boolean             @default(false)
+  priority       Int                 @default(100)
+  /// Optional routing restrictions, e.g. {"currencies":["NGN"],"countries":["NG"]}
+  routingRules   Json?
+  lastTestedAt   DateTime?
+  lastTestStatus String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  paymentMethods PaymentMethod[]
+
+  @@unique([organizationId, provider, environment])
+  @@index([organizationId, enabled])
+  @@map("payment_provider_configs")
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue: plans and prices
+// ---------------------------------------------------------------------------
+
+model Plan {
+  id             String  @id
+  organizationId String
+  /// Developer-facing stable identifier, e.g. "pro".
+  code           String
+  name           String
+  description    String?
+  active         Boolean @default(true)
+  /// Feature keys granted by this plan, consumed by the entitlement engine.
+  features       Json    @default("{}")
+  metadata       Json    @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  prices       Price[]
+  entitlements Entitlement[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, active])
+  @@map("plans")
+}
+
+enum PricingModel {
+  FLAT_RECURRING
+  PER_SEAT
+  USAGE_METERED
+  HYBRID
+}
+
+enum IntervalUnit {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+model Price {
+  id             String       @id
+  organizationId String
+  planId         String
+  /// Developer-facing stable identifier, e.g. "pro_monthly_ngn".
+  code           String
+  nickname       String?
+  model          PricingModel
+  currency       String
+
+  /// Recurring base amount in minor units. Null for pure usage pricing.
+  unitAmount     Int?
+  /// Canonical billing schedule. The platform drives this, not the provider.
+  intervalUnit   IntervalUnit
+  intervalCount  Int          @default(1)
+
+  /// Usage pricing: charge `usageUnitAmount` per `usageUnitSize` units.
+  usageMeterId   String?
+  usageUnitAmount Int?
+  usageUnitSize  Int?         @default(1)
+  /// Units bundled into the base amount before overage begins.
+  includedUnits  Int?
+
+  trialDays      Int?
+  active         Boolean      @default(true)
+  metadata       Json         @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan          Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  usageMeter    UsageMeter?    @relation(fields: [usageMeterId], references: [id])
+  subscriptions Subscription[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, planId])
+  @@index([planId, active])
+  @@map("prices")
+}
+
+// ---------------------------------------------------------------------------
+// Customers and payment methods
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id             String  @id
+  organizationId String
+  /// The developer's own user identifier. Their application stays the source of
+  /// truth for identity; this is the join key back to it.
+  externalId     String?
+  email          String
+  name           String?
+  phone          String?
+  currency       String?
+  country        String?
+  metadata       Json    @default("{}")
+  deletedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  paymentMethods  PaymentMethod[]
+  subscriptions   Subscription[]
+  invoices        Invoice[]
+  paymentAttempts PaymentAttempt[]
+  usageEvents     UsageEvent[]
+  entitlements    Entitlement[]
+  redemptions     CouponRedemption[]
+  referralsMade   Referral[]          @relation("ReferrerCustomer")
+  referralsGot    Referral[]          @relation("ReferredCustomer")
+  creditEntries   CreditLedgerEntry[]
+  portalSessions  PortalSession[]
+
+  @@unique([organizationId, externalId])
+  @@index([organizationId, email])
+  @@map("customers")
+}
+
+enum PaymentMethodType {
+  CARD
+  BANK_ACCOUNT
+  BANK_TRANSFER
+  DIRECT_DEBIT
+  MOBILE_MONEY
+  USSD
+}
+
+enum PaymentMethodStatus {
+  ACTIVE
+  EXPIRED
+  DETACHED
+  INVALID
+}
+
+model PaymentMethod {
+  id             String              @id
+  organizationId String
+  customerId     String
+  providerConfigId String?
+  provider       PaymentProviderKind
+  type           PaymentMethodType
+  status         PaymentMethodStatus @default(ACTIVE)
+
+  /// Opaque provider-issued handle (authorization code, token, mandate id).
+  /// Raw PANs, CVVs and bank credentials are never accepted or persisted.
+  providerPaymentMethodRef String
+  providerCustomerRef      String?
+
+  brand     String?
+  last4     String?
+  expMonth  Int?
+  expYear   Int?
+  bankName  String?
+  isDefault Boolean  @default(false)
+  metadata  Json     @default("{}")
+  detachedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  providerConfig PaymentProviderConfig? @relation(fields: [providerConfigId], references: [id])
+  subscriptions  Subscription[]
+  attempts       PaymentAttempt[]
+
+  @@unique([organizationId, provider, providerPaymentMethodRef])
+  @@index([customerId, status])
+  @@map("payment_methods")
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions
+// ---------------------------------------------------------------------------
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  GRACE_PERIOD
+  PAUSED
+  UNPAID
+  CANCELED
+  EXPIRED
+}
+
+model Subscription {
+  id             String             @id
+  organizationId String
+  customerId     String
+  priceId        String
+  status         SubscriptionStatus @default(ACTIVE)
+  quantity       Int                @default(1)
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  /// Day-of-month the cycle is anchored to, so month-end subscriptions do not
+  /// drift after being clamped by a short month.
+  billingAnchorDay   Int?
+
+  trialStart DateTime?
+  trialEnd   DateTime?
+
+  cancelAtPeriodEnd Boolean   @default(false)
+  canceledAt        DateTime?
+  endedAt           DateTime?
+  pausedAt          DateTime?
+
+  gracePeriodStart DateTime?
+  gracePeriodEnd   DateTime?
+  /// Snapshot of the org policy captured when the failure occurred, so a later
+  /// settings change cannot retroactively alter an in-flight grace period.
+  gracePolicy      Json?
+
+  paymentMethodId String?
+  metadata        Json    @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization  Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer      Customer                    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  price         Price                       @relation(fields: [priceId], references: [id])
+  paymentMethod PaymentMethod?              @relation(fields: [paymentMethodId], references: [id])
+  invoices      Invoice[]
+  transitions   SubscriptionTransition[]
+  entitlements  Entitlement[]
+
+  @@index([organizationId, status])
+  @@index([customerId])
+  @@index([status, currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+/// Append-only record of every state change, including the reason. Debugging a
+/// billing dispute six months later is impossible without this.
+model SubscriptionTransition {
+  id             String             @id @default(uuid())
+  subscriptionId String
+  fromStatus     SubscriptionStatus?
+  toStatus       SubscriptionStatus
+  reason         String
+  metadata       Json               @default("{}")
+  createdAt      DateTime           @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, createdAt])
+  @@map("subscription_transitions")
+}
+
+// ---------------------------------------------------------------------------
+// Invoices, line items and payment attempts
+// ---------------------------------------------------------------------------
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+model InvoiceCounter {
+  organizationId String
+  year           Int
+  lastSequence   Int    @default(0)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, year])
+  @@map("invoice_counters")
+}
+
+model Invoice {
+  id             String        @id
+  organizationId String
+  customerId     String
+  subscriptionId String?
+  invoiceNumber  String
+  status         InvoiceStatus @default(DRAFT)
+  currency       String
+
+  subtotal       Int @default(0)
+  discountAmount Int @default(0)
+  creditAmount   Int @default(0)
+  taxAmount      Int @default(0)
+  total          Int @default(0)
+  amountPaid     Int @default(0)
+  amountDue      Int @default(0)
+
+  billingPeriodStart DateTime?
+  billingPeriodEnd   DateTime?
+  dueDate            DateTime?
+  finalizedAt        DateTime?
+  paidAt             DateTime?
+  voidedAt           DateTime?
+
+  /// Set when the invoice is the one currently being recovered by dunning.
+  dunningAttempts   Int       @default(0)
+  nextRetryAt       DateTime?
+  metadata          Json      @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription Subscription?     @relation(fields: [subscriptionId], references: [id])
+  lineItems    InvoiceLineItem[]
+  attempts     PaymentAttempt[]
+  redemptions  CouponRedemption[]
+  creditEntries CreditLedgerEntry[]
+
+  @@unique([organizationId, invoiceNumber])
+  @@index([organizationId, status])
+  @@index([customerId, status])
+  @@index([status, nextRetryAt])
+  @@map("invoices")
+}
+
+enum LineItemType {
+  SUBSCRIPTION
+  SEAT
+  USAGE
+  OVERAGE
+  COUPON
+  CREDIT
+  PRORATION
+  TAX
+}
+
+model InvoiceLineItem {
+  id             String       @id
+  organizationId String
+  invoiceId      String
+  type           LineItemType
+  description    String
+  quantity       Int          @default(1)
+  /// Per-unit amount in minor units. Negative for credits and discounts.
+  unitAmount     Int
+  /// quantity x unitAmount, stored explicitly so historical invoices stay
+  /// stable even if pricing logic later changes.
+  amount         Int
+  currency       String
+
+  periodStart DateTime?
+  periodEnd   DateTime?
+  metadata    Json      @default("{}")
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice      Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_line_items")
+}
+
+enum PaymentAttemptStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+/// Append-only. A retry creates a new row; an existing row is never rewritten
+/// beyond its own terminal transition.
+model PaymentAttempt {
+  id             String               @id
+  organizationId String
+  invoiceId      String
+  customerId     String
+  provider       PaymentProviderKind
+  paymentMethodId String?
+  amount         Int
+  currency       String
+  providerReference String?
+  status         PaymentAttemptStatus @default(PENDING)
+  attemptNumber  Int
+  failureCode    String?
+  failureReason  String?
+  /// Where the customer completes payment, for redirect-based flows.
+  checkoutUrl    String?
+  rawProviderResponse Json?
+  metadata       Json                 @default("{}")
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice       Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+
+  @@unique([organizationId, provider, providerReference])
+  @@index([invoiceId, attemptNumber])
+  @@index([organizationId, status])
+  @@map("payment_attempts")
+}
+
+// ---------------------------------------------------------------------------
+// Usage metering and entitlements (schema landed with the core; engine follows
+// in phase 2 — see README for what is implemented today)
+// ---------------------------------------------------------------------------
+
+enum UsageAggregation {
+  SUM
+  MAX
+  LAST
+  UNIQUE_COUNT
+}
+
+model UsageMeter {
+  id             String           @id
+  organizationId String
+  code           String
+  name           String
+  unitLabel      String?
+  aggregation    UsageAggregation @default(SUM)
+  active         Boolean          @default(true)
+  metadata       Json             @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  events       UsageEvent[]
+  prices       Price[]
+
+  @@unique([organizationId, code])
+  @@map("usage_meters")
+}
+
+model UsageEvent {
+  id             String   @id
+  organizationId String
+  customerId     String
+  meterId        String
+  /// Caller-supplied idempotency key. The same event is never counted twice.
+  eventId        String
+  units          Int
+  timestamp      DateTime
+  metadata       Json     @default("{}")
+  processedAt    DateTime?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  meter        UsageMeter   @relation(fields: [meterId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, eventId])
+  @@index([customerId, meterId, timestamp])
+  @@map("usage_events")
+}
+
+enum EntitlementType {
+  BOOLEAN
+  LIMIT
+  UNLIMITED
+  USAGE
+}
+
+model Entitlement {
+  id             String          @id
+  organizationId String
+  featureKey     String
+  type           EntitlementType
+  /// Numeric ceiling for LIMIT/USAGE entitlements; null for BOOLEAN/UNLIMITED.
+  limitValue     Int?
+  booleanValue   Boolean?
+  meterCode      String?
+
+  planId         String?
+  customerId     String?
+  subscriptionId String?
+
+  expiresAt DateTime?
+  metadata  Json      @default("{}")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan?         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, featureKey])
+  @@index([customerId, featureKey])
+  @@map("entitlements")
+}
+
+// ---------------------------------------------------------------------------
+// Growth: coupons, referrals, credits (schema only in this phase)
+// ---------------------------------------------------------------------------
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+model Coupon {
+  id             String       @id
+  organizationId String
+  code           String
+  type           DiscountType
+  /// Basis points for PERCENTAGE (1500 = 15%), minor units for FIXED_AMOUNT.
+  value          Int
+  /// Required for FIXED_AMOUNT: a NGN coupon may never touch a USD invoice.
+  currency       String?
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  maxRedemptions Int?
+  redemptionCount Int         @default(0)
+  perCustomerLimit Int?       @default(1)
+  applicablePlanIds String[]  @default([])
+  firstPaymentOnly Boolean    @default(false)
+  active         Boolean      @default(true)
+  metadata       Json         @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  redemptions  CouponRedemption[]
+
+  @@unique([organizationId, code])
+  @@map("coupons")
+}
+
+model CouponRedemption {
+  id             String   @id
+  organizationId String
+  couponId       String
+  customerId     String
+  invoiceId      String?
+  amountApplied  Int
+  currency       String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  coupon       Coupon       @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoice      Invoice?     @relation(fields: [invoiceId], references: [id])
+
+  @@index([organizationId, couponId])
+  @@index([customerId])
+  @@map("coupon_redemptions")
+}
+
+enum ReferralRewardType {
+  CREDIT
+  PERCENTAGE_DISCOUNT
+}
+
+enum ReferralTrigger {
+  SIGNUP
+  FIRST_SUCCESSFUL_PAYMENT
+  NTH_SUCCESSFUL_PAYMENT
+}
+
+model ReferralProgram {
+  id             String             @id
+  organizationId String
+  name           String
+  rewardType     ReferralRewardType @default(CREDIT)
+  rewardAmount   Int
+  rewardCurrency String?
+  trigger        ReferralTrigger    @default(FIRST_SUCCESSFUL_PAYMENT)
+  active         Boolean            @default(true)
+  metadata       Json               @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  referrals    Referral[]
+
+  @@map("referral_programs")
+}
+
+enum ReferralStatus {
+  PENDING
+  QUALIFIED
+  REWARDED
+  VOID
+}
+
+model Referral {
+  id             String         @id
+  organizationId String
+  programId      String
+  code           String
+  referrerCustomerId String
+  referredCustomerId String?
+  status         ReferralStatus @default(PENDING)
+  qualifiedAt    DateTime?
+  rewardedAt     DateTime?
+  createdAt      DateTime       @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  program      ReferralProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  referrer     Customer        @relation("ReferrerCustomer", fields: [referrerCustomerId], references: [id], onDelete: Cascade)
+  referred     Customer?       @relation("ReferredCustomer", fields: [referredCustomerId], references: [id])
+
+  @@unique([organizationId, code])
+  @@index([referrerCustomerId])
+  @@map("referrals")
+}
+
+enum CreditEntryType {
+  CREDIT
+  DEBIT
+  EXPIRATION
+  REVERSAL
+}
+
+enum CreditSource {
+  REFERRAL
+  PROMOTION
+  MANUAL_ADJUSTMENT
+  REFUND
+}
+
+/// Immutable ledger. Balance is derived by summing entries, never by mutating a
+/// stored wallet figure.
+model CreditLedgerEntry {
+  id             String          @id
+  organizationId String
+  customerId     String
+  type           CreditEntryType
+  source         CreditSource
+  /// Always positive; `type` carries the direction.
+  amount         Int
+  currency       String
+  reference      String?
+  invoiceId      String?
+  reversesEntryId String?
+  expiresAt      DateTime?
+  metadata       Json            @default("{}")
+  createdAt      DateTime        @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoice      Invoice?     @relation(fields: [invoiceId], references: [id])
+
+  @@index([customerId, currency, createdAt])
+  @@map("credit_ledger_entries")
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure: webhooks, idempotency, portal sessions, audit
+// ---------------------------------------------------------------------------
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+model WebhookEvent {
+  id             String              @id
+  organizationId String?
+  provider       PaymentProviderKind
+  /// Deterministic identifier derived from the provider payload. Combined with
+  /// the unique constraint below this is what makes replay a no-op.
+  providerEventId String
+  eventType      String
+  rawPayload     Json
+  signatureVerified Boolean          @default(false)
+  status         WebhookEventStatus  @default(RECEIVED)
+  processingAttempts Int             @default(0)
+  errorMessage   String?
+  receivedAt     DateTime            @default(now())
+  processedAt    DateTime?
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, provider, providerEventId])
+  @@index([status, receivedAt])
+  @@map("webhook_events")
+}
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+model IdempotencyKey {
+  id             String            @id
+  organizationId String
+  key            String
+  endpoint       String
+  /// SHA-256 of the canonicalised request body. A replay with a different body
+  /// is rejected rather than silently answered from cache.
+  requestHash    String
+  status         IdempotencyStatus @default(IN_PROGRESS)
+  responseStatus Int?
+  response       Json?
+  createdAt      DateTime          @default(now())
+  expiresAt      DateTime
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key, endpoint])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+model PortalSession {
+  id             String    @id
+  organizationId String
+  customerId     String
+  tokenHash      String    @unique
+  returnUrl      String?
+  expiresAt      DateTime
+  usedAt         DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([expiresAt])
+  @@map("portal_sessions")
+}
+
+enum ActorType {
+  USER
+  API_KEY
+  SYSTEM
+  CUSTOMER
+}
+
+model AuditLog {
+  id             String    @id
+  organizationId String
+  actorType      ActorType
+  actorId        String?
+  userId         String?
+  action         String
+  resource       String
+  resourceId     String?
+  metadata       Json      @default("{}")
+  ipAddress      String?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, resource, resourceId])
+  @@map("audit_logs")
+}
