@@ -1,5 +1,5 @@
 {
-  "name": "@billing-platform/api",
+  "name": "@tierbase/api",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
@@ -9,11 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@billing-platform/billing": "0.1.0",
-    "@billing-platform/database": "0.1.0",
-    "@billing-platform/payments-core": "0.1.0",
-    "@billing-platform/payments-mock": "0.1.0",
-    "@billing-platform/shared": "0.1.0",
+    "@tierbase/billing": "0.1.0",
+    "@tierbase/database": "0.1.0",
+    "@tierbase/payments-core": "0.1.0",
+    "@tierbase/payments-mock": "0.1.0",
+    "@tierbase/shared": "0.1.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
     "@fastify/helmet": "^13.0.1",

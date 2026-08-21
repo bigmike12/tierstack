@@ -1,4 +1,4 @@
-import { CURRENCIES, type CurrencyCode } from "@billing-platform/shared";
+import { CURRENCIES, type CurrencyCode } from "@tierbase/shared";
 
 /**
  * Amounts arrive from the API as integer minor units. They are only ever

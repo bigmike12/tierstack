@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { money } from "@billing-platform/shared";
+import { money } from "@tierbase/shared";
 import { MockPaymentProvider } from "./provider";
 import { InMemoryMockStore } from "./store";
 

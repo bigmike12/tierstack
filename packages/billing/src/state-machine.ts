@@ -1,4 +1,4 @@
-import { BillingError } from "@billing-platform/shared";
+import { BillingError } from "@tierbase/shared";
 
 export type SubscriptionStatus =
   | "INCOMPLETE"

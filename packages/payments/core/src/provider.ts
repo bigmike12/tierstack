@@ -1,4 +1,4 @@
-import { UnsupportedCapabilityError } from "@billing-platform/shared";
+import { UnsupportedCapabilityError } from "@tierbase/shared";
 import type {
   ChargePaymentMethodInput,
   CheckoutResult,

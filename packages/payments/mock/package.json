@@ -1,12 +1,12 @@
 {
-  "name": "@billing-platform/payments-mock",
+  "name": "@tierbase/payments-mock",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": { "typecheck": "tsc --noEmit" },
   "dependencies": {
-    "@billing-platform/payments-core": "0.1.0",
-    "@billing-platform/shared": "0.1.0"
+    "@tierbase/payments-core": "0.1.0",
+    "@tierbase/shared": "0.1.0"
   }
 }

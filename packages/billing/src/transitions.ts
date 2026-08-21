@@ -1,4 +1,4 @@
-import type { TransactionClient } from "@billing-platform/database";
+import type { TransactionClient } from "@tierbase/database";
 import { transition, type SubscriptionStatus } from "./state-machine";
 
 /**

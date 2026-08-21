@@ -1,4 +1,4 @@
-import { newRequestId } from "@billing-platform/shared";
+import { newRequestId } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 
 /**

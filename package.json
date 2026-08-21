@@ -1,8 +1,8 @@
 {
-  "name": "billing-platform",
+  "name": "tierbase",
   "private": true,
   "version": "0.1.0",
-  "description": "Provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure. Product name is not final; internal identifier is BILLING_PLATFORM.",
+  "description": "Tierbase \u2014 provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
   "packageManager": "npm@10.9.7",
   "workspaces": [
     "packages/*",
@@ -17,9 +17,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "turbo run dev --parallel",
-    "dev:api": "npm run dev --workspace @billing-platform/api",
-    "dev:dashboard": "npm run dev --workspace @billing-platform/dashboard",
-    "dev:worker": "npm run dev --workspace @billing-platform/billing-worker",
+    "dev:api": "npm run dev --workspace @tierbase/api",
+    "dev:dashboard": "npm run dev --workspace @tierbase/dashboard",
+    "dev:worker": "npm run dev --workspace @tierbase/billing-worker",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",

@@ -3,11 +3,12 @@ import Link from "next/link";
 import { logoutAction } from "@/actions/session";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { Sidebar } from "@/components/sidebar";
+import { Wordmark } from "@/components/wordmark";
 import { Button } from "@/components/ui/button";
 import { apiFetchOrNull } from "@/lib/api";
 import type { Session } from "@/lib/types";
 
-const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Billing Platform";
+const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierbase";
 const billingEnv = (process.env.BILLING_ENV ?? "test").toUpperCase();
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -20,10 +21,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen">
       <div className="hidden w-60 shrink-0 border-r border-border bg-card/60 md:block">
-        <div className="flex h-14 items-center gap-2 border-b border-border px-5">
-          <span aria-hidden className="size-2.5 rounded-sm bg-foreground" />
-          <Link href="/overview" className="truncate text-sm font-semibold tracking-tight">
-            {appName}
+        <div className="flex h-14 items-center border-b border-border px-5">
+          <Link href="/overview" className="min-w-0 text-sm">
+            <Wordmark name={appName} />
           </Link>
         </div>
         <Sidebar />

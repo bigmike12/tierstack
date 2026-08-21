@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@billing-platform/database";
+import type { PrismaClient } from "@tierbase/database";
 import {
   BillingError,
   addInterval,
@@ -8,7 +8,7 @@ import {
   money,
   newId,
   type CurrencyCode,
-} from "@billing-platform/shared";
+} from "@tierbase/shared";
 import { resolveCustomer, type CustomerInput } from "./customers";
 import { createInvoice, finalizeInvoice } from "./invoice";
 import { calculateProration, calculateSeatProration } from "./proration";

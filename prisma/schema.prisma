@@ -1,7 +1,7 @@
-// Billing infrastructure platform — canonical data model.
+// Tierbase — canonical data model.
 //
 // Design rules enforced throughout this schema:
-//   * The platform is the billing system of record. No provider object is
+//   * Tierbase is the billing system of record. No provider object is
 //     canonical; provider identifiers are stored as references only.
 //   * Every business resource carries organizationId. Tenant isolation is a
 //     schema-level property, not a query convention.

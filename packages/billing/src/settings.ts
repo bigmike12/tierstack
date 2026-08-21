@@ -1,5 +1,5 @@
-import type { TransactionClient } from "@billing-platform/database";
-import { newId } from "@billing-platform/shared";
+import type { TransactionClient } from "@tierbase/database";
+import { newId } from "@tierbase/shared";
 import type { DunningPolicy } from "./grace";
 
 /**

@@ -5,9 +5,9 @@
  * stable slug or code.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { createPrismaClient } from "@billing-platform/database";
-import { encryptCredentials } from "@billing-platform/payments-core";
-import { newId } from "@billing-platform/shared";
+import { createPrismaClient } from "@tierbase/database";
+import { encryptCredentials } from "@tierbase/payments-core";
+import { newId } from "@tierbase/shared";
 import { scrypt as scryptCallback } from "node:crypto";
 import { promisify } from "node:util";
 

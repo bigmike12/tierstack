@@ -2,8 +2,8 @@ import { cookies } from "next/headers";
 
 const API_URL = process.env.API_URL ?? "http://localhost:4000";
 
-export const SESSION_COOKIE = "bp_session";
-export const ORG_COOKIE = "bp_org";
+export const SESSION_COOKIE = "tb_session";
+export const ORG_COOKIE = "tb_org";
 
 export interface ApiEnvelope<T> {
   data: T | null;

@@ -2,7 +2,7 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
-import { createPrismaClient, type PrismaClient } from "@billing-platform/database";
+import { createPrismaClient, type PrismaClient } from "@tierbase/database";
 import Fastify, { type FastifyInstance } from "fastify";
 import { loadConfig, type AppConfig } from "./env";
 import { createRedis, type RedisClient } from "./lib/redis";

@@ -1,5 +1,5 @@
-import type { PrismaClient, TransactionClient } from "@billing-platform/database";
-import { newId, redact } from "@billing-platform/shared";
+import type { PrismaClient, TransactionClient } from "@tierbase/database";
+import { newId, redact } from "@tierbase/shared";
 
 export type ActorType = "USER" | "API_KEY" | "SYSTEM" | "CUSTOMER";
 

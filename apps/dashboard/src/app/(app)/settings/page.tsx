@@ -58,18 +58,19 @@ export default async function SettingsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Naming</CardTitle>
+              <CardTitle>Branding</CardTitle>
               <CardDescription>
-                The product name is not decided, so nothing is hard-coded. The display name, URLs and email
-                sender all come from environment configuration.
+                The display name, URLs and email sender are read from configuration rather than written
+                into the engine, so a white-label deployment is an environment change.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <DescriptionList
                 items={[
-                  { label: "Internal identifier", value: <Mono>BILLING_PLATFORM</Mono> },
                   { label: "Display name", value: <Mono>APP_NAME</Mono> },
-                  { label: "Package scope", value: <Mono>@billing-platform/*</Mono> },
+                  { label: "Email sender", value: <Mono>EMAIL_SENDER</Mono> },
+                  { label: "Invoice prefix", value: <Mono>INVOICE_NUMBER_PREFIX</Mono> },
+                  { label: "Package scope", value: <Mono>@tierbase/*</Mono> },
                 ]}
               />
             </CardContent>

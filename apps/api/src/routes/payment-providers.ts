@@ -1,7 +1,7 @@
-import type { PrismaClient } from "@billing-platform/database";
-import { instantiateProvider } from "@billing-platform/billing";
-import { encryptCredentials } from "@billing-platform/payments-core";
-import { BillingError, newId, success } from "@billing-platform/shared";
+import type { PrismaClient } from "@tierbase/database";
+import { instantiateProvider } from "@tierbase/billing";
+import { encryptCredentials } from "@tierbase/payments-core";
+import { BillingError, newId, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireActor, requireOrganization, requireRole } from "../context";

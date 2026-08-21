@@ -1,4 +1,4 @@
-import { addDays } from "@billing-platform/shared";
+import { addDays } from "@tierbase/shared";
 
 export type GracePeriodAccess = "FULL_ACCESS" | "RESTRICTED_ACCESS" | "NO_ACCESS";
 export type DunningFailureAction = "MARK_UNPAID" | "CANCEL" | "PAUSE";

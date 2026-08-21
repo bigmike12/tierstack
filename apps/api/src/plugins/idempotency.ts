@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { PrismaClient } from "@billing-platform/database";
-import { BillingError, newId } from "@billing-platform/shared";
+import type { PrismaClient } from "@tierbase/database";
+import { BillingError, newId } from "@tierbase/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 export interface IdempotencyOptions {

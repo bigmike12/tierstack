@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@billing-platform/database";
+import type { PrismaClient } from "@tierbase/database";
 import {
   attemptInvoicePayment,
   cancelSubscription,
@@ -9,8 +9,8 @@ import {
   renewSubscription,
   resumeSubscription,
   loadBillingSettings,
-} from "@billing-platform/billing";
-import { BillingError, success } from "@billing-platform/shared";
+} from "@tierbase/billing";
+import { BillingError, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { environmentOf, requireOrganization, requireSecretKeyOrUser } from "../context";

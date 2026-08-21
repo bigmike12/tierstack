@@ -1,11 +1,11 @@
-import type { TransactionClient } from "@billing-platform/database";
+import type { TransactionClient } from "@tierbase/database";
 import {
   BillingError,
   addDays,
   assertCurrency,
   newId,
   type CurrencyCode,
-} from "@billing-platform/shared";
+} from "@tierbase/shared";
 import type { ComputedLine } from "./pricing";
 
 export interface CreateInvoiceParams {

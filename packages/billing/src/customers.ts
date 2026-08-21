@@ -1,5 +1,5 @@
-import type { TransactionClient } from "@billing-platform/database";
-import { BillingError, assertCurrency, newId } from "@billing-platform/shared";
+import type { TransactionClient } from "@tierbase/database";
+import { BillingError, assertCurrency, newId } from "@tierbase/shared";
 
 export interface CustomerInput {
   /** The developer's own user id. Optional, but strongly recommended. */

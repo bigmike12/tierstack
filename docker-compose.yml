@@ -1,28 +1,28 @@
-# Local infrastructure for the billing platform.
+# Local infrastructure for Tierbase.
 # The application itself runs on the host via `npm run dev`; this file provides
 # only the stateful services it needs.
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: billing_platform_postgres
+    container_name: tierbase_postgres
     environment:
-      POSTGRES_USER: billing
-      POSTGRES_PASSWORD: billing
-      POSTGRES_DB: billing_platform
+      POSTGRES_USER: tierbase
+      POSTGRES_PASSWORD: tierbase
+      POSTGRES_DB: tierbase
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U billing -d billing_platform"]
+      test: ["CMD-SHELL", "pg_isready -U tierbase -d tierbase"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:7-alpine
-    container_name: billing_platform_redis
+    container_name: tierbase_redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"

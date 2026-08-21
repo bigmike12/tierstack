@@ -1,5 +1,5 @@
 {
-  "name": "@billing-platform/billing-worker",
+  "name": "@tierbase/billing-worker",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
@@ -9,9 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@billing-platform/billing": "0.1.0",
-    "@billing-platform/database": "0.1.0",
-    "@billing-platform/shared": "0.1.0",
+    "@tierbase/billing": "0.1.0",
+    "@tierbase/database": "0.1.0",
+    "@tierbase/shared": "0.1.0",
     "bullmq": "^5.34.6",
     "ioredis": "^5.4.2"
   }

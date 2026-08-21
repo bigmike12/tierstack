@@ -7,7 +7,7 @@ import {
   subtractMoney,
   type CurrencyCode,
   type Money,
-} from "@billing-platform/shared";
+} from "@tierbase/shared";
 
 export interface ProrationInput {
   /** The period the customer has already been billed for. */

@@ -17,8 +17,8 @@ import {
   type RefundResult,
   type WebhookRequest,
   type WebhookVerificationResult,
-} from "@billing-platform/payments-core";
-import { BillingError, assertCurrency, money } from "@billing-platform/shared";
+} from "@tierbase/payments-core";
+import { BillingError, assertCurrency, money } from "@tierbase/shared";
 import type { MockStore, MockTransaction } from "./store";
 
 /**

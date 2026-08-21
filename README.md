@@ -1,14 +1,15 @@
-# Billing Infrastructure Platform
+# Tierbase
 
-A provider-agnostic billing, subscription and payment-orchestration layer for
-African software businesses. The platform is the **system of record** for the
-billing lifecycle; Paystack, Monnify and Flutterwave are payment rails it drives,
-not the source of truth for anything.
+Billing, subscription and payment-orchestration infrastructure for African
+software businesses. Tierbase is the **system of record** for the billing
+lifecycle; Paystack, Monnify and Flutterwave are payment rails it drives, not
+the source of truth for anything.
 
-> **Naming.** The product name is not decided. Nothing in this repository
-> hard-codes a brand: the internal identifier is `BILLING_PLATFORM`, package
-> names use the `@billing-platform/*` placeholder scope, and every user-facing
-> name, URL and email sender is read from configuration (`packages/shared/src/config.ts`).
+> **Branding.** The product is Tierbase, on `gettierbase.com`. The indirection
+> is kept anyway: the display name, URLs and email sender are read from
+> configuration (`packages/shared/src/config.ts`), never written into the
+> engine, so a white-label deployment or a second domain stays an environment
+> change. Packages are scoped `@tierbase/*`.
 
 ---
 
@@ -128,9 +129,8 @@ reads as "no data yet".
 | Webhooks | Endpoint URLs and the received-event log with signature status |
 | Settings | Billing policy, organization, team |
 
-There is no marketing landing page. Everything public-facing depends on the
-product name and visual identity, which are still undecided — see the naming
-note at the top.
+There is no marketing site yet — this is the operator dashboard. The public
+`gettierbase.com` site is separate work.
 
 ---
 
@@ -346,7 +346,7 @@ The Prisma client is generated in its Rust-free configuration (`engineType =
 ## Repository layout
 
 ```
-billing-platform/
+tierbase/
 ├── apps/
 │   ├── api/                   Fastify HTTP API
 │   └── dashboard/             Next.js operator UI

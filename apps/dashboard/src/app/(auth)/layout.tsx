@@ -1,15 +1,20 @@
-const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Billing Platform";
+import { Wordmark } from "@/components/wordmark";
+
+const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierbase";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      <main className="flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-sm">{children}</div>
+      <main className="flex flex-col items-center justify-center px-6 py-12">
+        <div className="w-full max-w-sm">
+          <Wordmark name={appName} className="mb-10 text-sm lg:hidden" />
+          {children}
+        </div>
       </main>
 
       <aside className="hidden border-l border-border bg-muted/40 px-12 py-16 lg:flex lg:flex-col lg:justify-center">
         <div className="max-w-md">
-          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{appName}</p>
+          <Wordmark name={appName} className="text-sm" />
           <h2 className="mt-4 text-2xl font-semibold leading-snug tracking-tight">
             Your billing logic, defined once.
           </h2>

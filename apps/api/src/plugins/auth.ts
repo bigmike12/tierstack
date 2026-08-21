@@ -1,11 +1,11 @@
-import type { PrismaClient } from "@billing-platform/database";
-import { BillingError } from "@billing-platform/shared";
+import type { PrismaClient } from "@tierbase/database";
+import { BillingError } from "@tierbase/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AppConfig } from "../env";
 import { hashApiKey, hashToken, parseApiKey } from "../lib/api-keys";
 import type { MemberRole } from "../context";
 
-export const SESSION_COOKIE = "bp_session";
+export const SESSION_COOKIE = "tb_session";
 
 /** Routes that must be reachable without credentials. */
 const PUBLIC_PREFIXES = [

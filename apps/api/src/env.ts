@@ -18,7 +18,7 @@ const schema = z.object({
     .regex(/^[0-9a-fA-F]{64}$/, "ENCRYPTION_KEY must be 64 hex characters (32 bytes)"),
 
   BILLING_ENV: z.enum(["test", "live"]).default("test"),
-  APP_NAME: z.string().default("BILLING_PLATFORM"),
+  APP_NAME: z.string().default("TIERBASE"),
   INVOICE_NUMBER_PREFIX: z.string().default("INV"),
 
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 14),

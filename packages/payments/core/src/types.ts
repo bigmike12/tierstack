@@ -1,4 +1,4 @@
-import type { CurrencyCode, Money } from "@billing-platform/shared";
+import type { CurrencyCode, Money } from "@tierbase/shared";
 
 export type ProviderKind = "PAYSTACK" | "MONNIFY" | "FLUTTERWAVE" | "MOCK";
 

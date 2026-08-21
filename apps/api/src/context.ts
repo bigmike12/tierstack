@@ -1,5 +1,5 @@
-import type { PrismaClient } from "@billing-platform/database";
-import { BillingError } from "@billing-platform/shared";
+import type { PrismaClient } from "@tierbase/database";
+import { BillingError } from "@tierbase/shared";
 import type { FastifyRequest } from "fastify";
 
 export type MemberRole = "OWNER" | "ADMIN" | "MEMBER";

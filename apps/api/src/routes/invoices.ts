@@ -1,6 +1,6 @@
-import type { PrismaClient } from "@billing-platform/database";
-import { attemptInvoicePayment, voidInvoice } from "@billing-platform/billing";
-import { BillingError, success } from "@billing-platform/shared";
+import type { PrismaClient } from "@tierbase/database";
+import { attemptInvoicePayment, voidInvoice } from "@tierbase/billing";
+import { BillingError, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { environmentOf, requireOrganization, requireSecretKeyOrUser } from "../context";

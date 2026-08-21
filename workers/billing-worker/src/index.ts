@@ -1,5 +1,5 @@
 import { Queue, Worker, type Job } from "bullmq";
-import { createPrismaClient } from "@billing-platform/database";
+import { createPrismaClient } from "@tierbase/database";
 import Redis from "ioredis";
 import {
   runGraceExpiry,

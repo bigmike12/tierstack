@@ -1,4 +1,4 @@
-import { BillingError, failure, redact } from "@billing-platform/shared";
+import { BillingError, failure, redact } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 
