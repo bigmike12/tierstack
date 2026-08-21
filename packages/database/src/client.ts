@@ -11,7 +11,9 @@ export * from "./generated/enums";
  */
 export function createPrismaClient(databaseUrl = process.env.DATABASE_URL): PrismaClient {
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL is not set. Copy .env.example to .env and fill it in.");
+    throw new Error(
+      "DATABASE_URL is not set. Run `npm run setup` (or copy .env.example to .env) first."
+    );
   }
   const adapter = new PrismaPg({ connectionString: databaseUrl });
   return new PrismaClient({

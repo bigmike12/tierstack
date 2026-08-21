@@ -58,26 +58,26 @@ Nothing pretends to work.
 Requires Node 20+, Docker (or a local PostgreSQL 16 and Redis 7).
 
 ```bash
-docker compose up -d          # PostgreSQL + Redis
-cp .env.example .env          # then fill in the two secrets, see below
-npm install
-npm run db:deploy             # apply migrations
-npm run db:seed               # organization, plans, mock provider, test API key
-npm run demo:data             # optional: subscribers across every billing state
-npm run dev                   # API :4000 · dashboard :3000 · worker
+docker compose up -d     # PostgreSQL + Redis
+npm install              # also writes .env with generated secrets
+npm run db:reset         # migrate + seed
+npm run demo:data        # optional: subscribers across every billing state
+npm run dev              # API :4000 · dashboard :3000 · worker
 ```
+
+Use `yarn`, `pnpm` or `bun` if you prefer — every script is package-manager
+agnostic, and install records which one you chose (Turborepo needs to be told).
+
+Install creates `.env` from `.env.example` and generates a real
+`SESSION_SECRET` and `ENCRYPTION_KEY`; it never touches an existing `.env`, and
+it is skipped in CI and production. **Back up `ENCRYPTION_KEY`** — it seals
+stored payment-provider credentials, so changing it later makes them
+undecryptable.
 
 `npm run dev` starts all three. To run them separately: `npm run dev:api`,
 `npm run dev:dashboard`, `npm run dev:worker`.
 
 The seed prints dashboard credentials — sign in at <http://localhost:3000>.
-
-Generate the two secrets before anything but local play:
-
-```bash
-openssl rand -base64 48   # SESSION_SECRET
-openssl rand -hex 32      # ENCRYPTION_KEY  (exactly 64 hex characters)
-```
 
 `npm run db:seed` also prints a `sk_test_...` key once. Then:
 
@@ -88,8 +88,9 @@ curl -s http://localhost:4000/v1/plans -H "Authorization: Bearer sk_test_..."
 ### Verify the whole thing
 
 ```bash
-npm test        # 91 unit tests: money, intervals, proration, state machine,
-                # grace policy, routing, capabilities, mock rail, idempotency
+npm test        # 97 unit tests: money, intervals, proration, state machine,
+                # grace policy, routing, capabilities, mock rail, idempotency,
+                # env loading
 npm run e2e     # 106 end-to-end checks against real PostgreSQL + Redis
 ```
 
@@ -373,6 +374,7 @@ tierbase/
 | `npm run dev:worker` | Background worker only |
 | `npm run db:deploy` | Apply migrations |
 | `npm run db:migrate` | Create a migration from schema changes |
+| `npm run setup` | Recreate `.env` and re-detect the package manager |
 | `npm run db:seed` | Seed an organization, catalogue, mock provider, API key |
 | `npm run demo:data` | Populate subscribers across every billing state |
 | `npm run db:reset` | Drop, re-migrate, re-seed |

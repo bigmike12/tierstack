@@ -34,10 +34,10 @@ export function loadRootEnv(startDir: string = process.cwd()): string | null {
 
   for (const line of readFileSync(envPath, "utf8").split("\n")) {
     const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!match) continue;
-    const [, key, rawValue] = match;
+    const key = match?.[1];
+    if (!key) continue;
     if (process.env[key] !== undefined) continue;
-    let value = rawValue.trim();
+    let value = (match[2] ?? "").trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
@@ -76,7 +76,7 @@ export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(
-      `${name} is not set. Run \`npm run setup:env\` (or copy .env.example to .env) and fill it in.`
+      `${name} is not set. Run \`npm run setup\` (or copy .env.example to .env) and fill it in.`
     );
   }
   return value;
