@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@tierbase/database";
 import { assertCurrency, success } from "@tierbase/shared";
-import { loadBillingSettings } from "@tierbase/billing";
+import { loadBillingSettings, notifyEntitlementChange } from "@tierbase/billing";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireActor, requireOrganization, requireRole } from "../context";
@@ -41,6 +41,8 @@ export function registerBillingSettingsRoutes(app: FastifyInstance, prisma: Pris
       data: body,
     });
 
+    // accessDuringGracePeriod decides whether a lapsed customer keeps service.
+    await notifyEntitlementChange(organizationId, null);
     await recordAudit(prisma, {
       organizationId,
       actorType: actor.kind,

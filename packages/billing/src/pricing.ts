@@ -31,6 +31,8 @@ export interface PriceSnapshot {
   unitAmount: number | null;
   intervalUnit: "DAY" | "WEEK" | "MONTH" | "YEAR";
   intervalCount: number;
+  usageMeterId?: string | null;
+  usageMeterCode?: string | null;
   usageUnitAmount?: number | null;
   usageUnitSize?: number | null;
   includedUnits?: number | null;
@@ -123,26 +125,117 @@ export function buildRecurringLines(params: {
         },
       ];
     }
+    // The base fee only. Metered consumption is billed in arrears by
+    // buildUsageLines, on the invoice that opens the following period.
     case "HYBRID":
+      return [
+        {
+          type: "SUBSCRIPTION",
+          description: `${label} — base`,
+          quantity: 1,
+          unitAmount: requireUnitAmount(price),
+          amount: requireUnitAmount(price),
+          currency,
+          periodStart,
+          periodEnd,
+        },
+      ];
+
+    // Nothing is owed in advance; the whole charge is consumption, billed for
+    // the period once it has closed.
     case "USAGE_METERED":
-      throw new BillingError(
-        "NOT_IMPLEMENTED",
-        `Price "${price.code}" uses the ${price.model} model, which needs the usage-metering engine (phase 2). ` +
-          "FLAT_RECURRING and PER_SEAT subscriptions are fully supported today."
-      );
+      return [];
   }
 }
 
+export interface UsageLineInput {
+  price: PriceSnapshot;
+  meterName: string;
+  unitLabel?: string | null;
+  /** Units consumed in the closed period. */
+  used: number;
+  /** Units bundled into the base fee. */
+  included: number;
+  /** Units beyond the allowance. */
+  overage: number;
+  /** Priced blocks the overage represents. */
+  blocks: number;
+  periodStart: Date;
+  periodEnd: Date;
+}
+
 /**
- * Called before a subscription is created. Fails loudly for pricing models the
- * engine cannot yet bill correctly, instead of issuing a wrong invoice later.
+ * Invoice lines for consumption in a period that has ended.
+ *
+ * Usage is billed in arrears — you cannot invoice for tokens before they are
+ * spent — while the recurring base is billed in advance. On a hybrid plan a
+ * renewal invoice therefore carries next period's base fee alongside last
+ * period's overage, and both lines say which window they cover.
+ */
+export function buildUsageLines(input: UsageLineInput): ComputedLine[] {
+  const { price, used, included, overage, blocks } = input;
+  const currency = priceCurrency(price);
+  const rate = price.usageUnitAmount ?? 0;
+  const blockSize = Math.max(price.usageUnitSize ?? 1, 1);
+  const units = input.unitLabel ?? "units";
+  const window = `${input.periodStart.toISOString().slice(0, 10)} – ${input.periodEnd.toISOString().slice(0, 10)}`;
+
+  const lines: ComputedLine[] = [];
+
+  // A zero-value line documenting what the allowance absorbed. Without it an
+  // invoice for a customer inside their quota says nothing about their usage,
+  // which is the first thing they look for.
+  if (included > 0) {
+    lines.push({
+      type: "USAGE",
+      description: `${input.meterName} — ${used.toLocaleString()} ${units} used, ${included.toLocaleString()} included (${window})`,
+      quantity: Math.min(used, included),
+      unitAmount: 0,
+      amount: 0,
+      currency,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      metadata: { meter: price.usageMeterCode ?? null, used, included },
+    });
+  }
+
+  if (overage > 0 && rate > 0) {
+    lines.push({
+      type: "OVERAGE",
+      description:
+        blockSize === 1
+          ? `${input.meterName} — ${overage.toLocaleString()} ${units} over the allowance (${window})`
+          : `${input.meterName} — ${overage.toLocaleString()} ${units} over the allowance, billed as ${blocks} × ${blockSize.toLocaleString()} (${window})`,
+      quantity: blocks,
+      unitAmount: rate,
+      amount: blocks * rate,
+      currency,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      metadata: { meter: price.usageMeterCode ?? null, overage, blocks, blockSize },
+    });
+  }
+
+  return lines;
+}
+
+/**
+ * Called before a subscription is created. A metered price is only billable if
+ * it actually points at a meter — otherwise consumption could never be counted
+ * and the invoice would silently under-charge.
  */
 export function assertBillablePriceModel(price: PriceSnapshot): void {
-  if (price.model === "USAGE_METERED" || price.model === "HYBRID") {
+  if ((price.model === "USAGE_METERED" || price.model === "HYBRID") && !price.usageMeterId) {
     throw new BillingError(
-      "NOT_IMPLEMENTED",
-      `Subscriptions on ${price.model} prices require the usage-metering engine, which is not part of this build. ` +
-        `Price "${price.code}" can be created and listed, but not subscribed to yet.`
+      "VALIDATION_ERROR",
+      `Price "${price.code}" uses the ${price.model} model but has no usage meter attached, ` +
+        "so its consumption could never be billed. Set usageMeterCode on the price."
+    );
+  }
+  if (price.model === "USAGE_METERED" && !price.usageUnitAmount) {
+    throw new BillingError(
+      "VALIDATION_ERROR",
+      `Price "${price.code}" is usage-metered but has no usageUnitAmount, so it would never charge anything.`
     );
   }
 }

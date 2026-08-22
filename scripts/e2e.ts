@@ -479,6 +479,171 @@ async function main(): Promise<void> {
   check("expiry can be switched off by the developer", noneExpired.length === 0, noneExpired);
   await call("PUT", "/v1/billing-settings", { headers: asUser(), payload: { incompleteExpiryHours: 24 } });
 
+  // -- 12c. Usage metering and entitlements ----------------------------------
+  section("12c. Usage metering and entitlements");
+
+  const meter = await call("POST", "/v1/usage-meters", {
+    headers: asKey(),
+    payload: { code: "AI_TOKENS", name: "AI tokens", unitLabel: "tokens", aggregation: "SUM" },
+  });
+  check("usage meter created", meter.status === 201, meter.body);
+
+  const hybridPrice = await call("POST", "/v1/prices", {
+    headers: asKey(),
+    payload: {
+      planId: "pro",
+      code: "ai_hybrid_ngn",
+      currency: "NGN",
+      unitAmount: 1_500_000,
+      interval: "MONTHLY",
+      model: "HYBRID",
+      usageMeterCode: "AI_TOKENS",
+      includedUnits: 100_000,
+      usageUnitAmount: 5_000,
+      usageUnitSize: 1_000,
+    },
+  });
+  check("hybrid price created with a meter attached", hybridPrice.status === 201, hybridPrice.body);
+
+  const noMeter = await call("POST", "/v1/prices", {
+    headers: asKey(),
+    payload: { planId: "pro", code: "broken_metered", currency: "NGN", interval: "MONTHLY", model: "USAGE_METERED", usageUnitAmount: 100 },
+  });
+  const brokenSub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `broken-${stamp}` }),
+    payload: { customer: { externalId: "user_broken", email: "broken@example.test" }, priceId: "broken_metered" },
+  });
+  check("a metered price with no meter is refused rather than under-charging",
+    noMeter.status === 201 && brokenSub.body.error?.code === "VALIDATION_ERROR", brokenSub.body);
+
+  const meteredSub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `metered-${stamp}` }),
+    payload: {
+      customer: { externalId: "user_ai", email: "ai@example.test", name: "AI Startup" },
+      priceId: "ai_hybrid_ngn",
+      metadata: { mockOutcome: "SUCCESS" },
+    },
+  });
+  const meteredSubId = meteredSub.body.data?.subscription?.id;
+  check("a hybrid subscription can now be created", meteredSub.status === 201, meteredSub.body.error);
+  check("only the base fee is billed in advance", meteredSub.body.data?.amountDue === 1_500_000, meteredSub.body.data?.amountDue);
+  check("hybrid subscription activates on payment", meteredSub.body.data?.subscription?.status === "ACTIVE");
+
+  const beforeUsage = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", featureKey: "AI_TOKENS" },
+  });
+  check("entitlement reports the full included allowance before any usage",
+    beforeUsage.body.data?.access === true && beforeUsage.body.data?.remainingQuota === 100_000, beforeUsage.body.data);
+
+  const track1 = await call("POST", "/v1/events/track", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", meter: "AI_TOKENS", units: 40_000, eventId: `evt-${stamp}-1` },
+  });
+  check("usage event accepted", track1.body.data?.recorded === true, track1.body);
+
+  const replayEvent = await call("POST", "/v1/events/track", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", meter: "AI_TOKENS", units: 40_000, eventId: `evt-${stamp}-1` },
+  });
+  check("a replayed event is de-duplicated, not double counted", replayEvent.body.data?.duplicate === true);
+
+  const afterFirst = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", featureKey: "AI_TOKENS" },
+  });
+  check("quota reflects consumption once, not twice",
+    afterFirst.body.data?.remainingQuota === 60_000, afterFirst.body.data);
+  check("reason is the usage quota", afterFirst.body.data?.reason === "USAGE_QUOTA");
+
+  const batch = await call("POST", "/v1/events/track/batch", {
+    headers: asKey(),
+    payload: {
+      events: [
+        { customerId: "user_ai", meter: "AI_TOKENS", units: 30_000, eventId: `evt-${stamp}-2`, metadata: {} },
+        { customerId: "user_ai", meter: "AI_TOKENS", units: 50_000, eventId: `evt-${stamp}-3`, metadata: {} },
+        { customerId: "user_ai", meter: "AI_TOKENS", units: 10, eventId: `evt-${stamp}-2`, metadata: {} },
+      ],
+    },
+  });
+  check("batch ingestion accepts new events and rejects the repeat",
+    batch.body.data?.accepted === 2 && batch.body.data?.duplicates === 1, batch.body.data);
+
+  const exceeded = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", featureKey: "AI_TOKENS" },
+  });
+  check("access is denied once the allowance is spent",
+    exceeded.body.data?.access === false && exceeded.body.data?.reason === "QUOTA_EXCEEDED", exceeded.body.data);
+
+  const usageView = await call("GET", "/v1/usage?customerId=user_ai", { headers: asKey() });
+  const tokenUsage = usageView.body.data?.meters?.find((m: Json) => m.meterCode === "AI_TOKENS");
+  check("usage reports 120,000 consumed", tokenUsage?.used === 120_000, tokenUsage);
+  check("overage is 20,000 units", tokenUsage?.overage === 20_000);
+  check("overage is 20 priced blocks", tokenUsage?.overageBlocks === 20);
+  check("overage would cost NGN 1,000", tokenUsage?.overageAmount === 100_000, tokenUsage?.overageAmount);
+
+  const booleanFeature = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", featureKey: "export_pdf" },
+  });
+  check("plan feature flags resolve as boolean entitlements",
+    booleanFeature.body.data?.access === true && booleanFeature.body.data?.reason === "PLAN_FEATURE", booleanFeature.body.data);
+
+  const unknownFeature = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", featureKey: "teleportation" },
+  });
+  check("an unknown feature is reported as not found", unknownFeature.body.data?.reason === "FEATURE_NOT_FOUND");
+
+  const override = await call("POST", "/v1/entitlements", {
+    headers: asUser(),
+    payload: { featureKey: "AI_TOKENS", type: "USAGE", limitValue: 500_000, meterCode: "AI_TOKENS", customerId: "user_ai" },
+  });
+  check("a customer override can be granted", override.status === 201, override.body);
+
+  const afterOverride = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", featureKey: "AI_TOKENS" },
+  });
+  check("the override beats the plan and restores access",
+    afterOverride.body.data?.access === true && afterOverride.body.data?.remainingQuota === 380_000, afterOverride.body.data);
+  check("the override invalidated the cached answer immediately",
+    afterOverride.body.data?.reason === "USAGE_QUOTA");
+
+  await call("DELETE", `/v1/entitlements/${override.body.data.id}`, { headers: asUser() });
+
+  // -- 12d. Billing the consumption ------------------------------------------
+  section("12d. Overage reaches the invoice");
+
+  const meteredRenewal = await call("POST", `/v1/subscriptions/${meteredSubId}/renew`, {
+    headers: asKey(),
+    payload: {},
+  });
+  check("hybrid subscription renews", meteredRenewal.body.data?.renewed === true, meteredRenewal.body);
+
+  const usageInvoice = await call("GET", `/v1/invoices/${meteredRenewal.body.data.invoiceId}`, { headers: asKey() });
+  const invoiceLines = usageInvoice.body.data.lineItems;
+  const baseLine = invoiceLines.find((l: Json) => l.type === "SUBSCRIPTION");
+  const usageLine = invoiceLines.find((l: Json) => l.type === "USAGE");
+  const overageLine = invoiceLines.find((l: Json) => l.type === "OVERAGE");
+
+  check("the base fee is billed in advance for the new period", baseLine?.amount === 1_500_000, baseLine);
+  check("included usage appears as a zero-value line", usageLine?.amount === 0 && usageLine !== undefined);
+  check("overage is billed in arrears for the closed period", overageLine?.amount === 100_000, overageLine);
+  check("overage is priced by whole blocks", overageLine?.quantity === 20 && overageLine?.unitAmount === 5_000);
+  check("invoice total is base plus overage", usageInvoice.body.data.total === 1_600_000, usageInvoice.body.data.total);
+  check("the two lines cover different windows",
+    new Date(baseLine.periodStart).getTime() > new Date(overageLine.periodStart).getTime());
+
+  const afterRenewalQuota = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: "user_ai", featureKey: "AI_TOKENS" },
+  });
+  check("the allowance resets with the new billing period",
+    afterRenewalQuota.body.data?.access === true && afterRenewalQuota.body.data?.remainingQuota === 100_000,
+    afterRenewalQuota.body.data);
+
   // -- 13. Webhooks ----------------------------------------------------------
   section("13. Webhook verification and de-duplication");
 

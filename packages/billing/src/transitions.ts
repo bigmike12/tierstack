@@ -1,4 +1,5 @@
 import type { TransactionClient } from "@tierbase/database";
+import { notifyEntitlementChange } from "./invalidation";
 import { transition, type SubscriptionStatus } from "./state-machine";
 
 /**
@@ -30,6 +31,10 @@ export async function applyTransition(
       metadata: metadata as never,
     },
   });
+
+  // Status drives entitlement access, so any cached answer for this customer is
+  // now stale. Every status change in the system passes through here.
+  await notifyEntitlementChange(updated.organizationId, updated.customerId);
 
   return updated;
 }

@@ -2,7 +2,9 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import { setEntitlementInvalidator } from "@tierbase/billing";
 import { createPrismaClient, type PrismaClient } from "@tierbase/database";
+import { EntitlementCache } from "@tierbase/entitlements";
 import Fastify, { type FastifyInstance } from "fastify";
 import { loadConfig, type AppConfig } from "./env";
 import { createRedis, type RedisClient } from "./lib/redis";
@@ -14,12 +16,14 @@ import { registerAuthRoutes } from "./routes/auth";
 import { registerBillingSettingsRoutes } from "./routes/billing-settings";
 import { registerCatalogueRoutes } from "./routes/catalogue";
 import { registerCustomerRoutes } from "./routes/customers";
+import { registerEntitlementRoutes } from "./routes/entitlements";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerMetricsRoutes } from "./routes/metrics";
 import { registerMockRoutes } from "./routes/mock";
 import { registerOrganizationRoutes } from "./routes/organizations";
 import { registerPaymentProviderRoutes } from "./routes/payment-providers";
 import { registerSubscriptionRoutes } from "./routes/subscriptions";
+import { registerUsageRoutes } from "./routes/usage";
 import { registerWebhookEventRoutes, registerWebhookRoutes } from "./routes/webhooks";
 
 export interface BuiltServer {
@@ -89,6 +93,14 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
     }
   );
 
+  // Any subscription status change anywhere in the system invalidates that
+  // customer's cached entitlements.
+  const entitlementCache = new EntitlementCache(redis);
+  setEntitlementInvalidator(async (organizationId, customerId) => {
+    if (customerId) await entitlementCache.invalidateCustomer(organizationId, customerId);
+    else await entitlementCache.invalidateOrganization(organizationId);
+  });
+
   registerRequestContext(app);
   registerErrorHandler(app);
   registerAuth(app, prisma, config);
@@ -103,6 +115,8 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
   registerSubscriptionRoutes(app, prisma, config, redis);
   registerInvoiceRoutes(app, prisma, config, redis);
   registerMetricsRoutes(app, prisma);
+  registerUsageRoutes(app, prisma, config, redis);
+  registerEntitlementRoutes(app, prisma, redis);
   registerMockRoutes(app, prisma, config, redis);
   registerWebhookRoutes(app, prisma, config, redis);
   registerWebhookEventRoutes(app, prisma);

@@ -12,9 +12,11 @@ import {
 import { resolveCustomer, type CustomerInput } from "./customers";
 import { createInvoice, finalizeInvoice } from "./invoice";
 import { calculateProration, calculateSeatProration } from "./proration";
+import { getUsageSnapshot } from "@tierbase/usage";
 import {
   assertBillablePriceModel,
   buildRecurringLines,
+  buildUsageLines,
   priceInterval,
   recurringAmount,
   type ComputedLine,
@@ -68,7 +70,7 @@ export async function createSubscription(
 
     const price = await tx.price.findFirst({
       where: { organizationId: params.organizationId, OR: [{ id: params.priceId }, { code: params.priceId }] },
-      include: { plan: true },
+      include: { plan: true, usageMeter: true },
     });
     if (!price) throw BillingError.notFound("PRICE_NOT_FOUND", "Price");
     if (!price.active) {
@@ -207,7 +209,7 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
   return prisma.$transaction(async (tx) => {
     const subscription = await tx.subscription.findUnique({
       where: { id: subscriptionId },
-      include: { price: { include: { plan: true } } },
+      include: { price: { include: { plan: true, usageMeter: true } } },
     });
     if (!subscription) throw BillingError.notFound("SUBSCRIPTION_NOT_FOUND", "Subscription");
 
@@ -249,6 +251,42 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       periodEnd,
       planName: subscription.price.plan.name,
     });
+
+    // Consumption for the period that just closed, billed in arrears. The base
+    // fee above covers the period about to open; these two windows differ by
+    // design and each line says which one it belongs to.
+    if (snapshot.usageMeterId) {
+      const closed = {
+        start: subscription.currentPeriodStart,
+        end: subscription.currentPeriodEnd,
+      };
+      const usage = await getUsageSnapshot(tx, {
+        organizationId: subscription.organizationId,
+        customerId: subscription.customerId,
+        meterId: snapshot.usageMeterId,
+        period: closed,
+        price: {
+          usageMeterId: snapshot.usageMeterId,
+          usageUnitAmount: snapshot.usageUnitAmount ?? null,
+          usageUnitSize: snapshot.usageUnitSize ?? null,
+          includedUnits: snapshot.includedUnits ?? null,
+        },
+      });
+
+      lines.push(
+        ...buildUsageLines({
+          price: snapshot,
+          meterName: usage.meterName,
+          unitLabel: usage.unitLabel,
+          used: usage.used,
+          included: usage.included,
+          overage: usage.overage,
+          blocks: usage.overageBlocks,
+          periodStart: closed.start,
+          periodEnd: closed.end,
+        })
+      );
+    }
 
     const invoice = await createInvoice(tx, {
       organizationId: subscription.organizationId,
@@ -301,7 +339,7 @@ export async function changePlan(prisma: PrismaClient, params: ChangePlanParams)
   return prisma.$transaction(async (tx) => {
     const subscription = await tx.subscription.findFirst({
       where: { id: params.subscriptionId, organizationId: params.organizationId },
-      include: { price: { include: { plan: true } } },
+      include: { price: { include: { plan: true, usageMeter: true } } },
     });
     if (!subscription) throw BillingError.notFound("SUBSCRIPTION_NOT_FOUND", "Subscription");
 
@@ -426,7 +464,7 @@ export async function changeQuantity(
   return prisma.$transaction(async (tx) => {
     const subscription = await tx.subscription.findFirst({
       where: { id: params.subscriptionId, organizationId: params.organizationId },
-      include: { price: { include: { plan: true } } },
+      include: { price: { include: { plan: true, usageMeter: true } } },
     });
     if (!subscription) throw BillingError.notFound("SUBSCRIPTION_NOT_FOUND", "Subscription");
 
@@ -697,6 +735,8 @@ export function toPriceSnapshot(price: {
   unitAmount: number | null;
   intervalUnit: string;
   intervalCount: number;
+  usageMeterId?: string | null;
+  usageMeter?: { code: string } | null;
   usageUnitAmount?: number | null;
   usageUnitSize?: number | null;
   includedUnits?: number | null;
@@ -711,6 +751,8 @@ export function toPriceSnapshot(price: {
     unitAmount: price.unitAmount,
     intervalUnit: price.intervalUnit as PriceSnapshot["intervalUnit"],
     intervalCount: price.intervalCount,
+    usageMeterId: price.usageMeterId ?? null,
+    usageMeterCode: price.usageMeter?.code ?? null,
     usageUnitAmount: price.usageUnitAmount ?? null,
     usageUnitSize: price.usageUnitSize ?? null,
     includedUnits: price.includedUnits ?? null,

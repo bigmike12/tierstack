@@ -15,9 +15,9 @@ the source of truth for anything.
 
 ## What is built
 
-This repository implements **steps 1–8 of the build order** plus the dashboard
-shell: the billing core, the mock payment rail, and a working operator UI on top
-of them. It is a working system, not a scaffold — the flows below run end to end
+This repository implements **steps 1–10 of the build order** plus the dashboard:
+the billing core, the mock payment rail, usage metering, the entitlement engine,
+and a working operator UI on top of them. It is a working system, not a scaffold — the flows below run end to end
 against a real database.
 
 | Area | Status |
@@ -36,13 +36,15 @@ against a real database.
 | Idempotency on money-moving endpoints | Complete |
 | Background worker (renewals, grace expiry, abandoned-checkout expiry, sweeps) | Complete |
 | Audit logging, secret redaction, tenant isolation | Complete |
+| Usage metering: meters, idempotent ingestion, aggregation, quota and overage | Complete |
+| Entitlement engine: boolean, limit, unlimited and usage features, Redis fast path | Complete |
+| Metered billing: `USAGE_METERED` and `HYBRID` prices bill consumption in arrears | Complete |
 | Dashboard: auth, section-57 navigation, and every page with an API behind it | Complete |
 
 **Deliberately not built yet** — and, importantly, not faked:
 
 | Area | Behaviour today |
 | --- | --- |
-| Usage metering & entitlement engine (phase 2) | Schema exists. Subscribing to a `USAGE_METERED` or `HYBRID` price returns `NOT_IMPLEMENTED` rather than issuing an invoice that silently omits metered charges. |
 | Paystack / Monnify / Flutterwave adapters (phase 3) | A configuration can be stored, but instantiating the adapter returns `NOT_IMPLEMENTED` and its capabilities report as `null`. |
 | Automated dunning retries (phase 4) | Grace periods open and close on the developer's configured policy; the *scheduled* retry ladder is not yet wired. Retry today is `POST /v1/invoices/:id/pay`. |
 | Customer portal, TypeScript/React SDKs, `/llms.txt` (phase 5) | Not present. The API they would sit on is. |
@@ -88,10 +90,10 @@ curl -s http://localhost:4000/v1/plans -H "Authorization: Bearer sk_test_..."
 ### Verify the whole thing
 
 ```bash
-npm test        # 97 unit tests: money, intervals, proration, state machine,
+npm test        # 139 unit tests: money, intervals, proration, state machine,
                 # grace policy, routing, capabilities, mock rail, idempotency,
-                # env loading
-npm run e2e     # 106 end-to-end checks against real PostgreSQL + Redis
+                # usage aggregation, quota, entitlement resolution, env loading
+npm run e2e     # 136 end-to-end checks against real PostgreSQL + Redis
 ```
 
 `npm run e2e` walks the complete lifecycle: create an organization, configure a
@@ -99,8 +101,9 @@ grace period, issue an API key, build a catalogue, auto-create a customer,
 subscribe, generate an invoice, pay it through the mock hosted checkout, store
 the payment method, renew on the stored method, upgrade with proration, change
 seats, take a declined payment into the grace period, recover it, process a
-signed webhook (and ignore its replay), expire an abandoned checkout, and prove
-another tenant can see none of it.
+signed webhook (and ignore its replay), expire an abandoned checkout, meter a
+customer's consumption to the point of overage and see it land on the next
+invoice, and prove another tenant can see none of it.
 
 ---
 
@@ -161,6 +164,8 @@ PostgreSQL       Provider adapters ──► Paystack · Monnify · Flutterwave 
 | `packages/shared` | Money (integer minor units, BigInt scaling), currency table, billing intervals, error codes, response envelope, redaction, id generation, branding config |
 | `packages/database` | Prisma client wrapper and generated types |
 | `packages/billing` | Pricing, proration, invoice engine, subscription state machine, customer resolution, payment orchestration, grace-period policy, provider registry |
+| `packages/usage` | Meters, idempotent event ingestion, aggregation, quota and overage arithmetic |
+| `packages/entitlements` | Feature resolution, the Redis fast path, and cache invalidation |
 | `packages/payments/core` | `PaymentProvider` interface, capability model, credential encryption, payment router |
 | `packages/payments/mock` | A complete simulated rail: hosted checkout, tokenization, recurring charges, declines, refunds, signed webhooks |
 | `apps/api` | HTTP surface, authentication, tenancy, idempotency, mock checkout page, webhook intake |
@@ -200,6 +205,28 @@ they get no grace period, no dunning ladder chasing a payment method they never
 had, and no entitlements regardless of your grace-access policy. Abandoned
 checkouts expire on a configurable window and their invoice is voided, so they
 do not sit on the books as receivable.
+
+**Usage is aggregated over the events, never from a counter.** Consumption is
+computed with an indexed aggregate in PostgreSQL at read time. A materialised
+per-period counter would be faster still, and it would be one more thing that
+can silently drift away from the events it claims to summarise — and a drifted
+counter is a wrong invoice you only discover when a customer disputes it. The
+events *are* the financial record; the number is derived from them.
+
+**Usage is billed in arrears, the base fee in advance.** You cannot invoice for
+tokens before they are spent. A hybrid renewal invoice therefore carries next
+period's base fee alongside last period's overage, and each line states the
+window it covers. Overage is charged by whole priced blocks — 1,500 units
+against a 1,000-unit block is two blocks — which is a pricing decision, so it
+lives in one tested function rather than inside an invoice calculation.
+
+**Entitlement definitions are cached; consumption never is.** Redis holds the
+resolved plan, overrides and subscription status, which change rarely. Live
+usage is read from PostgreSQL on every check, because a stale quota becomes a
+wrong charge. Organization-wide invalidation bumps a version counter rather than
+scanning keys, and every subscription status change in the system — from the
+API, the worker or a webhook — invalidates through a single hook on
+`applyTransition`, so a customer whose payment just cleared is never told no.
 
 **Payment attempts are append-only.** Every retry writes a new row; nothing
 overwrites a previous attempt. The attempt id doubles as the payment reference,
@@ -269,6 +296,13 @@ POST   /v1/invoices/:id/pay         POST   /v1/subscriptions/:id/resume
 POST   /v1/invoices/:id/void        POST   /v1/subscriptions/:id/pause
 GET    /v1/payment-attempts         POST   /v1/subscriptions/:id/renew
                                     GET    /v1/subscriptions/:id/transitions
+
+POST   /v1/events/track             POST   /v1/entitlements/check
+POST   /v1/events/track/batch       POST   /v1/entitlements/check/batch
+GET    /v1/usage                    GET    /v1/entitlements
+GET    /v1/usage/events             POST   /v1/entitlements
+GET    /v1/usage-meters             DELETE /v1/entitlements/:id
+POST   /v1/usage-meters
 
 GET    /v1/metrics/overview         GET    /v1/webhook-events
 
@@ -384,7 +418,18 @@ tierbase/
 
 ## Next steps
 
-The build order continues at step 9. In order: the entitlement engine and usage
-metering (which unblocks `USAGE_METERED` and `HYBRID` pricing), the scheduled
-dunning retry ladder, then the real provider adapters — each of which is a new
-file under `packages/payments/`, with no change to the billing engine.
+The build order continues at step 11. Recommended order, which deviates from the
+spec in one place:
+
+1. **Step 13 — the Paystack adapter**, pulled ahead of dunning. Until one real
+   rail exists nothing can be put in front of a paying user, and what a real
+   provider's webhooks and failure codes actually look like will reshape the
+   dunning work. It is a new file under `packages/payments/`, with no change to
+   the billing engine.
+2. **Step 11 — the scheduled retry ladder.** Dunning only earns its keep once
+   real payments fail, so it is worth doing after a real rail exists.
+3. **Steps 16–20** — the customer portal, the SDKs, coupons and referrals.
+
+Not in the specification but needed before launch: transactional email (dunning
+that cannot tell a customer their card failed is decorative), a platform
+back-office for Tierbase itself, and an NDPR/PCI scope review.

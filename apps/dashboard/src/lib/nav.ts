@@ -46,8 +46,8 @@ export const NAV: NavGroup[] = [
   {
     label: "Metering",
     items: [
-      { href: "/usage", label: "Usage", icon: Gauge, phase: "Phase 2" },
-      { href: "/entitlements", label: "Entitlements", icon: ListChecks, phase: "Phase 2" },
+      { href: "/usage", label: "Usage", icon: Gauge },
+      { href: "/entitlements", label: "Entitlements", icon: ListChecks },
     ],
   },
   {

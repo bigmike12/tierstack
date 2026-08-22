@@ -215,3 +215,74 @@ export interface SubscriptionTransition {
   metadata: Record<string, unknown>;
   createdAt: string;
 }
+
+export interface UsageMeter {
+  id: string;
+  code: string;
+  name: string;
+  unitLabel: string | null;
+  aggregation: "SUM" | "MAX" | "LAST" | "UNIQUE_COUNT";
+  active: boolean;
+  createdAt: string;
+}
+
+export interface UsageSnapshot {
+  meterId: string;
+  meterCode: string;
+  meterName: string;
+  unitLabel: string | null;
+  aggregation: "SUM" | "MAX" | "LAST" | "UNIQUE_COUNT";
+  used: number;
+  included: number;
+  remaining: number;
+  overage: number;
+  exhausted: boolean;
+  overageBlocks: number;
+  overageAmount: number | null;
+  period: { start: string; end: string };
+}
+
+export interface UsageResponse {
+  customerId: string;
+  externalId: string | null;
+  period: { start: string; end: string };
+  /** Currency of the subscription the meters are priced in, when there is one. */
+  currency?: string;
+  meters: UsageSnapshot[];
+}
+
+export interface ResolvedFeature {
+  featureKey: string;
+  access: boolean;
+  remainingQuota: number | null;
+  reason: string;
+  limit?: number | null;
+  used?: number | null;
+  restricted?: boolean;
+}
+
+export interface CustomerEntitlements {
+  customerId: string;
+  externalId: string | null;
+  context: {
+    subscriptionId: string | null;
+    status: SubscriptionStatus | null;
+    planId: string | null;
+    accessDuringGracePeriod: "FULL_ACCESS" | "RESTRICTED_ACCESS" | "NO_ACCESS";
+    currentPeriodStart: string | null;
+    currentPeriodEnd: string | null;
+  };
+  features: ResolvedFeature[];
+}
+
+export interface EntitlementRow {
+  id: string;
+  featureKey: string;
+  type: "BOOLEAN" | "LIMIT" | "UNLIMITED" | "USAGE";
+  limitValue: number | null;
+  booleanValue: boolean | null;
+  meterCode: string | null;
+  expiresAt: string | null;
+  plan?: { id: string; code: string; name: string } | null;
+  customer?: { id: string; externalId: string | null; email: string } | null;
+}

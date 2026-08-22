@@ -11,7 +11,9 @@
   "dependencies": {
     "@tierbase/billing": "0.1.0",
     "@tierbase/database": "0.1.0",
+    "@tierbase/entitlements": "0.1.0",
     "@tierbase/shared": "0.1.0",
+    "@tierbase/usage": "0.1.0",
     "bullmq": "^5.34.6",
     "ioredis": "^5.4.2"
   }

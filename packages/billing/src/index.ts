@@ -4,6 +4,7 @@ export * from "./proration";
 export * from "./invoice";
 export * from "./grace";
 export * from "./settings";
+export * from "./invalidation";
 export * from "./transitions";
 export * from "./customers";
 export * from "./subscriptions";

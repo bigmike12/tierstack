@@ -115,6 +115,30 @@ async function main(): Promise<void> {
     update: {},
   });
 
+  const meters = [
+    { code: "AI_TOKENS", name: "AI tokens", unitLabel: "tokens", aggregation: "SUM" },
+    { code: "API_CALLS", name: "API calls", unitLabel: "calls", aggregation: "SUM" },
+  ] as const;
+
+  for (const spec of meters) {
+    await prisma.usageMeter.upsert({
+      where: { organizationId_code: { organizationId: organization.id, code: spec.code } },
+      create: {
+        id: newId("usageMeter"),
+        organizationId: organization.id,
+        code: spec.code,
+        name: spec.name,
+        unitLabel: spec.unitLabel,
+        aggregation: spec.aggregation,
+      },
+      update: { name: spec.name, unitLabel: spec.unitLabel },
+    });
+  }
+
+  const tokenMeter = await prisma.usageMeter.findUnique({
+    where: { organizationId_code: { organizationId: organization.id, code: "AI_TOKENS" } },
+  });
+
   const plans = [
     {
       code: "starter",
@@ -143,6 +167,25 @@ async function main(): Promise<void> {
       description: "Priced per seat.",
       features: { export_pdf: true, advanced_analytics: true, sso: true },
       prices: [{ code: "team_seat_monthly_ngn", currency: "NGN", unitAmount: 200_000, interval: "MONTH", model: "PER_SEAT" }],
+    },
+    {
+      code: "ai",
+      name: "AI",
+      description: "A base fee plus metered inference — the hybrid model.",
+      features: { export_pdf: true, advanced_analytics: true, team_members: 10 },
+      prices: [
+        {
+          code: "ai_hybrid_ngn",
+          currency: "NGN",
+          unitAmount: 1_500_000,
+          interval: "MONTH",
+          model: "HYBRID",
+          meter: "AI_TOKENS",
+          includedUnits: 100_000,
+          usageUnitAmount: 5_000,
+          usageUnitSize: 1_000,
+        },
+      ],
     },
   ] as const;
 
@@ -173,6 +216,10 @@ async function main(): Promise<void> {
           unitAmount: priceSpec.unitAmount,
           intervalUnit: priceSpec.interval as never,
           intervalCount: 1,
+          usageMeterId: "meter" in priceSpec && priceSpec.meter === "AI_TOKENS" ? (tokenMeter?.id ?? null) : null,
+          includedUnits: "includedUnits" in priceSpec ? priceSpec.includedUnits : null,
+          usageUnitAmount: "usageUnitAmount" in priceSpec ? priceSpec.usageUnitAmount : null,
+          usageUnitSize: "usageUnitSize" in priceSpec ? priceSpec.usageUnitSize : 1,
         },
         update: {},
       });
@@ -224,7 +271,8 @@ async function main(): Promise<void> {
   console.log(`  Organization  ${organization.name} (${organization.id})`);
   console.log(`  Dashboard     ${SEED_EMAIL} / ${SEED_PASSWORD}`);
   console.log(`  Provider      MOCK (test), default`);
-  console.log(`  Plans         starter, pro, team`);
+  console.log(`  Plans         starter, pro, team, ai (hybrid + metered)`);
+  console.log(`  Meters        AI_TOKENS, API_CALLS`);
   if (secret) {
     console.log(`\n  Test secret key (shown once):\n    ${secret}\n`);
   } else {

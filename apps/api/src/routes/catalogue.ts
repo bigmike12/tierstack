@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@tierbase/database";
-import { intervalFromRequest } from "@tierbase/billing";
+import { intervalFromRequest, notifyEntitlementChange } from "@tierbase/billing";
 import { BillingError, assertCurrency, newId, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -80,6 +80,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
       },
     });
 
+    await notifyEntitlementChange(organizationId, null);
     await recordAudit(prisma, {
       organizationId,
       actorType: actor.kind,
@@ -131,6 +132,9 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     if (!plan) throw BillingError.notFound("PLAN_NOT_FOUND", "Plan");
 
     const updated = await prisma.plan.update({ where: { id: plan.id }, data: body as never });
+    // Feature flags live on the plan, so this can change what every subscriber
+    // on it is entitled to.
+    await notifyEntitlementChange(organizationId, null);
     return success(updated, request.requestId);
   });
 
@@ -188,6 +192,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
       },
     });
 
+    await notifyEntitlementChange(organizationId, null);
     await recordAudit(prisma, {
       organizationId,
       actorType: actor.kind,

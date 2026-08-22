@@ -156,6 +156,54 @@ async function main(): Promise<void> {
   );
   console.log("  Never Paid → INCOMPLETE (no grace period, no entitlements)");
 
+  console.log("Adding a metered AI customer with real consumption…");
+  const aiSub = await call(
+    "POST",
+    "/v1/subscriptions",
+    {
+      customer: { externalId: "user_ai_lab", email: "ops@ailab.test", name: "AI Lab" },
+      priceId: "ai_hybrid_ngn",
+      metadata: { mockOutcome: "SUCCESS" },
+    },
+    { "idempotency-key": "demo-ai" }
+  );
+  if (aiSub.data?.subscription?.id) {
+    // A week of inference: mostly inside the allowance, tipping into overage.
+    const batches = [18_500, 22_000, 31_250, 27_800, 14_600, 9_400];
+    for (const [index, units] of batches.entries()) {
+      await call("POST", "/v1/events/track", {
+        customerId: "user_ai_lab",
+        meter: "AI_TOKENS",
+        units,
+        eventId: `demo-ai-tokens-${index}`,
+      });
+    }
+    const usage = await call("GET", "/v1/usage?customerId=user_ai_lab");
+    const tokens = usage.data?.meters?.find((m: Json) => m.meterCode === "AI_TOKENS");
+    console.log(
+      `  AI Lab → ${tokens?.used?.toLocaleString()} tokens used, ${tokens?.overage?.toLocaleString()} over allowance`
+    );
+
+    // A second customer who stays comfortably inside their allowance.
+    await call(
+      "POST",
+      "/v1/subscriptions",
+      {
+        customer: { externalId: "user_ai_calm", email: "hello@steadyai.test", name: "Steady AI" },
+        priceId: "ai_hybrid_ngn",
+        metadata: { mockOutcome: "SUCCESS" },
+      },
+      { "idempotency-key": "demo-ai-calm" }
+    );
+    await call("POST", "/v1/events/track", {
+      customerId: "user_ai_calm",
+      meter: "AI_TOKENS",
+      units: 34_200,
+      eventId: "demo-ai-calm-1",
+    });
+    console.log("  Steady AI → 34,200 tokens used, inside the allowance");
+  }
+
   console.log("Starting a trial…");
   await call(
     "POST",

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildRecurringLines, intervalFromRequest, recurringAmount, sumLines, type PriceSnapshot } from "./pricing";
+import {
+  assertBillablePriceModel,
+  buildRecurringLines,
+  buildUsageLines,
+  intervalFromRequest,
+  recurringAmount,
+  sumLines,
+  type PriceSnapshot,
+} from "./pricing";
 
 const flat: PriceSnapshot = {
   id: "price_1",
@@ -38,11 +46,105 @@ describe("pricing", () => {
     expect(lines[0]?.description).toContain("12 seats");
   });
 
-  it("refuses to invoice a usage-metered price rather than omitting the usage charge", () => {
-    const metered: PriceSnapshot = { ...flat, model: "USAGE_METERED", unitAmount: null };
+  it("bills nothing in advance for a pure usage price", () => {
+    const metered: PriceSnapshot = {
+      ...flat,
+      model: "USAGE_METERED",
+      unitAmount: null,
+      usageMeterId: "meter_1",
+      usageMeterCode: "AI_TOKENS",
+      usageUnitAmount: 5000,
+      usageUnitSize: 1000,
+    };
+    expect(buildRecurringLines({ price: metered, quantity: 1, periodStart, periodEnd, planName: "AI" })).toEqual([]);
+  });
+
+  it("bills only the base fee in advance on a hybrid price", () => {
+    const hybrid: PriceSnapshot = {
+      ...flat,
+      model: "HYBRID",
+      unitAmount: 1_000_000,
+      usageMeterId: "meter_1",
+      usageMeterCode: "AI_TOKENS",
+      usageUnitAmount: 2_000,
+      usageUnitSize: 1,
+      includedUnits: 100_000,
+    };
+    const lines = buildRecurringLines({ price: hybrid, quantity: 1, periodStart, periodEnd, planName: "AI" });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ type: "SUBSCRIPTION", amount: 1_000_000 });
+  });
+
+  it("refuses a metered price with no meter attached, rather than under-charging later", () => {
     expect(() =>
-      buildRecurringLines({ price: metered, quantity: 1, periodStart, periodEnd, planName: "AI" })
-    ).toThrow(/usage-metering engine/);
+      assertBillablePriceModel({ ...flat, model: "USAGE_METERED", unitAmount: null })
+    ).toThrow(/no usage meter attached/);
+  });
+
+  it("refuses a usage-metered price with no rate", () => {
+    expect(() =>
+      assertBillablePriceModel({ ...flat, model: "USAGE_METERED", unitAmount: null, usageMeterId: "m", usageUnitAmount: null })
+    ).toThrow(/never charge anything/);
+  });
+
+  describe("usage lines", () => {
+    const hybrid: PriceSnapshot = {
+      ...flat,
+      model: "HYBRID",
+      usageMeterId: "meter_1",
+      usageMeterCode: "AI_TOKENS",
+      usageUnitAmount: 5_000,
+      usageUnitSize: 1_000,
+      includedUnits: 100_000,
+    };
+
+    it("records included usage as a zero-value line so the invoice explains itself", () => {
+      const lines = buildUsageLines({
+        price: hybrid,
+        meterName: "AI tokens",
+        unitLabel: "tokens",
+        used: 40_000,
+        included: 100_000,
+        overage: 0,
+        blocks: 0,
+        periodStart,
+        periodEnd,
+      });
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({ type: "USAGE", amount: 0 });
+      expect(lines[0]?.description).toContain("100,000 included");
+    });
+
+    it("charges overage by whole blocks", () => {
+      const lines = buildUsageLines({
+        price: hybrid,
+        meterName: "AI tokens",
+        unitLabel: "tokens",
+        used: 152_300,
+        included: 100_000,
+        overage: 52_300,
+        blocks: 53,
+        periodStart,
+        periodEnd,
+      });
+      const overage = lines.find((line) => line.type === "OVERAGE");
+      expect(overage).toMatchObject({ quantity: 53, unitAmount: 5_000, amount: 265_000 });
+    });
+
+    it("emits nothing when there is no usage and nothing included", () => {
+      expect(
+        buildUsageLines({
+          price: { ...hybrid, includedUnits: null },
+          meterName: "AI tokens",
+          used: 0,
+          included: 0,
+          overage: 0,
+          blocks: 0,
+          periodStart,
+          periodEnd,
+        })
+      ).toEqual([]);
+    });
   });
 
   it("rejects a price whose model needs a unit amount but has none", () => {
