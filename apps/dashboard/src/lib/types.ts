@@ -77,6 +77,11 @@ export interface Price {
   intervalCount: number;
   trialDays: number | null;
   active: boolean;
+  /** Set on USAGE_METERED and HYBRID prices only. */
+  usageMeterId?: string | null;
+  usageUnitAmount?: number | null;
+  usageUnitSize?: number | null;
+  includedUnits?: number | null;
   plan?: { id: string; code: string; name: string };
 }
 

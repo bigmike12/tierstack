@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@tierbase/database";
 import { lookupCustomer, resolveCustomer } from "@tierbase/billing";
-import { BillingError, success } from "@tierbase/shared";
+import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireActor, requireOrganization, requireSecretKeyOrUser } from "../context";
@@ -46,27 +46,36 @@ export function registerCustomerRoutes(app: FastifyInstance, prisma: PrismaClien
     return reply.status(201).send(success(customer, request.requestId));
   });
 
+  /**
+   * Paginated list. `q` searches the fields a human would recognise a customer
+   * by — their own id for the customer, the email, and the name.
+   */
   app.get("/v1/customers", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as { email?: string; externalId?: string; limit?: string; cursor?: string };
-    const limit = Math.min(Number(query.limit ?? 50), 100);
+    const query = request.query as Record<string, unknown> & { email?: string; externalId?: string };
+    const page = parsePageQuery(query, { defaultLimit: 25 });
 
-    const customers = await prisma.customer.findMany({
-      where: {
-        organizationId,
-        deletedAt: null,
-        ...(query.email ? { email: query.email } : {}),
-        ...(query.externalId ? { externalId: query.externalId } : {}),
-      },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-      ...(query.cursor ? { skip: 1, cursor: { id: query.cursor } } : {}),
-    });
+    const where = {
+      organizationId,
+      deletedAt: null,
+      ...(query.email ? { email: query.email } : {}),
+      ...(query.externalId ? { externalId: query.externalId } : {}),
+      ...(searchFilter(page.q, ["externalId", "email", "name"]) ?? {}),
+    };
 
-    return success(
-      { items: customers, nextCursor: customers.length === limit ? customers.at(-1)?.id ?? null : null },
-      request.requestId
-    );
+    // Count and page in one round trip; the total is what lets the dashboard
+    // render "page 2 of 9" instead of guessing from a full page of results.
+    const [items, total] = await Promise.all([
+      prisma.customer.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: page.limit,
+        skip: page.skip,
+      }),
+      prisma.customer.count({ where }),
+    ]);
+
+    return success(paginated(items, page, total), request.requestId);
   });
 
   /** Accepts either the platform id (`cus_...`) or the developer's own id. */

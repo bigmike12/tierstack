@@ -8,6 +8,7 @@ import { DescriptionList, EmptyState, Mono, PageHeader, Stat } from "@/component
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate, relativeDays, titleCase } from "@/lib/format";
+import { emptyPage, type Paged } from "@/lib/list";
 import type { BillingSettings, Invoice, Subscription } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Dunning" };
@@ -15,14 +16,18 @@ export const metadata: Metadata = { title: "Dunning" };
 export default async function DunningPage() {
   const [settings, inGrace, unpaidSubs, openInvoices] = await Promise.all([
     apiFetchOrNull<BillingSettings>("/v1/billing-settings"),
-    apiFetchOrNull<Subscription[]>("/v1/subscriptions?status=GRACE_PERIOD&limit=100"),
-    apiFetchOrNull<Subscription[]>("/v1/subscriptions?status=UNPAID&limit=100"),
-    apiFetchOrNull<Invoice[]>("/v1/invoices?status=OPEN&limit=100"),
+    apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?status=GRACE_PERIOD&limit=50"),
+    apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?status=UNPAID&limit=1"),
+    apiFetchOrNull<Paged<Invoice>>("/v1/invoices?status=OPEN&limit=50"),
   ]);
 
-  const grace = inGrace ?? [];
-  const unpaid = unpaidSubs ?? [];
-  const outstanding = openInvoices ?? [];
+  // The counts come from the API's own totals rather than the length of a page,
+  // so "3 in grace" stays right when there are more than fit on one page.
+  const gracePage = inGrace ?? emptyPage<Subscription>();
+  const unpaidPage = unpaidSubs ?? emptyPage<Subscription>();
+  const invoicePage = openInvoices ?? emptyPage<Invoice>();
+  const grace = gracePage.items;
+  const outstanding = invoicePage.items;
 
   return (
     <>
@@ -34,17 +39,17 @@ export default async function DunningPage() {
       <section aria-label="Recovery summary" className="grid gap-4 sm:grid-cols-3">
         <Stat
           label="In grace period"
-          value={grace.length}
+          value={gracePage.total}
           sub="Failed, still recoverable"
-          tone={grace.length > 0 ? "warning" : "default"}
+          tone={gracePage.total > 0 ? "warning" : "default"}
         />
         <Stat
           label="Marked unpaid"
-          value={unpaid.length}
+          value={unpaidPage.total}
           sub="Grace period exhausted"
-          tone={unpaid.length > 0 ? "danger" : "default"}
+          tone={unpaidPage.total > 0 ? "danger" : "default"}
         />
-        <Stat label="Open invoices" value={outstanding.length} sub="Awaiting collection" />
+        <Stat label="Open invoices" value={invoicePage.total} sub="Awaiting collection" />
       </section>
 
       <Card className="mt-6">
@@ -136,6 +141,15 @@ export default async function DunningPage() {
               </TBody>
             </Table>
           )}
+          {gracePage.total > grace.length ? (
+            <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+              Showing the {grace.length} most recent of {gracePage.total.toLocaleString()} —{" "}
+              <Link href="/subscriptions?status=GRACE_PERIOD" className="underline underline-offset-4">
+                see all
+              </Link>
+              .
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -182,6 +196,15 @@ export default async function DunningPage() {
               </TBody>
             </Table>
           )}
+          {invoicePage.total > outstanding.length ? (
+            <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+              Showing the {outstanding.length} most recent of {invoicePage.total.toLocaleString()} —{" "}
+              <Link href="/invoices?status=OPEN" className="underline underline-offset-4">
+                see all
+              </Link>
+              .
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </>

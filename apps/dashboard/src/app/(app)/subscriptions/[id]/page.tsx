@@ -9,18 +9,21 @@ import { DescriptionList, Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { describeInterval, formatAmount, formatDate, formatDateTime, relativeDays, titleCase } from "@/lib/format";
+import type { Paged } from "@/lib/list";
 import type { Invoice, Subscription, SubscriptionTransition } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Subscription" };
 
 export default async function SubscriptionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [subscription, transitions, invoices] = await Promise.all([
+  const [subscription, transitions, invoicePage] = await Promise.all([
     apiFetchOrNull<Subscription>(`/v1/subscriptions/${id}`),
     apiFetchOrNull<SubscriptionTransition[]>(`/v1/subscriptions/${id}/transitions`),
-    apiFetchOrNull<Invoice[]>(`/v1/invoices?subscriptionId=${id}&limit=50`),
+    apiFetchOrNull<Paged<Invoice>>(`/v1/invoices?subscriptionId=${id}&limit=50`),
   ]);
   if (!subscription) notFound();
+
+  const invoices = invoicePage?.items ?? null;
 
   const price = subscription.price;
   const recurring =

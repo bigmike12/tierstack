@@ -19,3 +19,9 @@ out/
 
 # Release archives
 *.tar.gz
+
+# Redis snapshot, if one is started in the repo directory.
+dump.rdb
+
+# Local TypeScript build info.
+*.tsbuildinfo

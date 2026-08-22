@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { CustomerPicker } from "@/components/customer-picker";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { titleCase } from "@/lib/format";
-import type { Customer, CustomerEntitlements, EntitlementRow, Plan } from "@/lib/types";
+import { emptyPage, type Paged } from "@/lib/list";
+import type { Customer, CustomerEntitlements, EntitlementRow, Plan, Subscription } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Entitlements" };
 
@@ -34,19 +35,42 @@ export default async function EntitlementsPage({
 }) {
   const { customerId } = await searchParams;
 
-  const [rows, plans, customerList] = await Promise.all([
+  const [rows, plans, customerList, subscriptionList] = await Promise.all([
     apiFetchOrNull<EntitlementRow[]>("/v1/entitlements"),
     apiFetchOrNull<Plan[]>("/v1/plans"),
-    apiFetchOrNull<{ items: Customer[] }>("/v1/customers?limit=100"),
+    // Only the first page: the picker searches the rest on demand rather than
+    // shipping every customer to the browser.
+    apiFetchOrNull<Paged<Customer>>("/v1/customers?limit=20"),
+    apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?limit=20"),
   ]);
 
-  const customers = customerList?.items ?? [];
+  const customerPage = customerList ?? emptyPage<Customer>();
+
+  // Subscribers first. Entitlements are only interesting for someone who has a
+  // plan, and the twenty most recently created customers usually are not them.
+  const subscribers = new Map<string, Customer>();
+  for (const subscription of subscriptionList?.items ?? []) {
+    const customer = subscription.customer;
+    if (customer && !subscribers.has(customer.id)) subscribers.set(customer.id, customer as Customer);
+  }
+  const customers = [
+    ...subscribers.values(),
+    ...customerPage.items.filter((customer) => !subscribers.has(customer.id)),
+  ];
+
   const selected = customerId ?? customers[0]?.externalId ?? customers[0]?.id ?? null;
+  const selectedCustomer = customers.find(
+    (customer) => (customer.externalId ?? customer.id) === selected || customer.id === selected
+  );
   const resolved = selected
     ? await apiFetchOrNull<CustomerEntitlements>(
         `/v1/entitlements?customerId=${encodeURIComponent(selected)}`
       )
     : null;
+
+  // A customer reached by URL may not be on the first page, so fall back to
+  // whatever the resolver knows about them.
+  const resolvedLabel = resolved?.externalId ?? resolved?.customerId ?? null;
 
   return (
     <>
@@ -55,24 +79,23 @@ export default async function EntitlementsPage({
         description="What each customer may actually do. Definitions are cached in Redis; consumption is always read live from PostgreSQL, because a stale quota becomes a wrong invoice."
       />
 
-      {customers.length > 0 ? (
-        <div className="flex flex-wrap gap-2 pb-4">
-          {customers.slice(0, 12).map((customer) => {
-            const key = customer.externalId ?? customer.id;
-            return (
-              <Link
-                key={customer.id}
-                href={`/entitlements?customerId=${encodeURIComponent(key)}`}
-                className={`rounded-full border px-3 py-1 text-xs ${
-                  key === selected
-                    ? "border-foreground bg-secondary"
-                    : "border-border text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                {customer.externalId ?? customer.email}
-              </Link>
-            );
-          })}
+      {customerPage.total > 0 ? (
+        <div className="flex flex-wrap items-center gap-3 pb-4">
+          <CustomerPicker
+            basePath="/entitlements"
+            selected={selected}
+            selectedLabel={
+              selectedCustomer?.externalId ??
+              selectedCustomer?.email ??
+              resolvedLabel ??
+              selected
+            }
+            total={customerPage.total}
+            initialCustomers={customers}
+          />
+          <p className="text-xs text-muted-foreground">
+            {customerPage.total.toLocaleString()} customer{customerPage.total === 1 ? "" : "s"}
+          </p>
         </div>
       ) : null}
 

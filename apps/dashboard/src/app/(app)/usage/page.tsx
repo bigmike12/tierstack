@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { CustomerPicker } from "@/components/customer-picker";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, Mono, PageHeader, Stat } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate, titleCase } from "@/lib/format";
+import { emptyPage, type Paged } from "@/lib/list";
 import type { Customer, UsageMeter, UsageResponse } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Usage" };
@@ -19,20 +20,34 @@ export default async function UsagePage({
 
   const [meters, customerList, recentEvents] = await Promise.all([
     apiFetchOrNull<UsageMeter[]>("/v1/usage-meters"),
-    apiFetchOrNull<{ items: Customer[] }>("/v1/customers?limit=100"),
-    apiFetchOrNull<{ customerId: string }[]>("/v1/usage/events?limit=500"),
+    // Only the first page: the picker searches the rest on demand rather than
+    // shipping every customer to the browser.
+    apiFetchOrNull<Paged<Customer>>("/v1/customers?limit=20"),
+    apiFetchOrNull<Paged<{ customerId: string; customer: Customer }>>("/v1/usage/events?limit=500"),
   ]);
 
-  // Lead with customers who actually have consumption — landing on an empty
-  // state when other customers have usage tells you nothing.
-  const withUsage = new Set((recentEvents ?? []).map((event) => event.customerId));
-  const customers = [...(customerList?.items ?? [])].sort((a, b) => {
-    const left = withUsage.has(a.id) ? 0 : 1;
-    const right = withUsage.has(b.id) ? 0 : 1;
-    return left - right;
-  });
+  const customerPage = customerList ?? emptyPage<Customer>();
+
+  // Customers who actually have consumption, most recent first and de-duplicated.
+  // They come from the events rather than the customer list, because the
+  // customers with usage are rarely the twenty most recently created ones.
+  const consuming = new Map<string, Customer>();
+  for (const event of recentEvents?.items ?? []) {
+    if (event.customer && !consuming.has(event.customerId)) consuming.set(event.customerId, event.customer);
+  }
+  const withUsage = new Set(consuming.keys());
+
+  // Lead with them: landing on an empty state while other customers have usage
+  // tells you nothing about whether metering works.
+  const customers = [
+    ...consuming.values(),
+    ...customerPage.items.filter((customer) => !withUsage.has(customer.id)),
+  ];
 
   const selected = customerId ?? customers[0]?.externalId ?? customers[0]?.id ?? null;
+  const selectedCustomer = customers.find(
+    (customer) => (customer.externalId ?? customer.id) === selected || customer.id === selected
+  );
 
   const usage = selected
     ? await apiFetchOrNull<UsageResponse>(`/v1/usage?customerId=${encodeURIComponent(selected)}`)
@@ -90,28 +105,21 @@ export default async function UsagePage({
             </CardContent>
           </Card>
 
-          {customers.length > 0 ? (
-            <div className="flex flex-wrap gap-2 pb-4">
-              {customers.slice(0, 12).map((customer) => {
-                const key = customer.externalId ?? customer.id;
-                const active = key === selected;
-                return (
-                  <Link
-                    key={customer.id}
-                    href={`/usage?customerId=${encodeURIComponent(key)}`}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
-                      active
-                        ? "border-foreground bg-secondary"
-                        : "border-border text-muted-foreground hover:bg-muted"
-                    }`}
-                  >
-                    {withUsage.has(customer.id) ? (
-                      <span aria-label="has usage" className="size-1.5 rounded-full bg-success" />
-                    ) : null}
-                    {customer.externalId ?? customer.email}
-                  </Link>
-                );
-              })}
+          {customerPage.total > 0 ? (
+            <div className="flex flex-wrap items-center gap-3 pb-4">
+              <CustomerPicker
+                basePath="/usage"
+                selected={selected}
+                selectedLabel={
+                  selectedCustomer?.externalId ?? selectedCustomer?.email ?? usage?.externalId ?? selected
+                }
+                total={customerPage.total}
+                initialCustomers={customers}
+                highlighted={[...withUsage]}
+              />
+              <p className="text-xs text-muted-foreground">
+                A dot marks a customer with usage recorded this period.
+              </p>
             </div>
           ) : null}
 

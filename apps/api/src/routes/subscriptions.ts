@@ -10,7 +10,7 @@ import {
   resumeSubscription,
   loadBillingSettings,
 } from "@tierbase/billing";
-import { BillingError, success } from "@tierbase/shared";
+import { BillingError, paginated, parsePageQuery, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { environmentOf, requireOrganization, requireSecretKeyOrUser } from "../context";
@@ -136,25 +136,46 @@ export function registerSubscriptionRoutes(
     }
   });
 
+  /**
+   * Paginated list. `q` matches the customer a subscription belongs to or the
+   * plan it is on — the two things anyone actually looks a subscription up by.
+   */
   app.get("/v1/subscriptions", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as { customerId?: string; status?: string; limit?: string };
-    const limit = Math.min(Number(query.limit ?? 50), 100);
+    const query = request.query as Record<string, unknown> & { customerId?: string; status?: string };
+    const page = parsePageQuery(query, { defaultLimit: 25 });
 
-    const subscriptions = await prisma.subscription.findMany({
-      where: {
-        organizationId,
-        ...(query.customerId ? { customerId: query.customerId } : {}),
-        ...(query.status ? { status: query.status as never } : {}),
-      },
-      include: {
-        price: { include: { plan: true } },
-        customer: { select: { id: true, externalId: true, email: true, name: true } },
-      },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    });
-    return success(subscriptions, request.requestId);
+    const where = {
+      organizationId,
+      ...(query.customerId ? { customerId: query.customerId } : {}),
+      ...(query.status ? { status: query.status as never } : {}),
+      ...(page.q
+        ? {
+            OR: [
+              { customer: { externalId: { contains: page.q, mode: "insensitive" as const } } },
+              { customer: { email: { contains: page.q, mode: "insensitive" as const } } },
+              { customer: { name: { contains: page.q, mode: "insensitive" as const } } },
+              { price: { plan: { name: { contains: page.q, mode: "insensitive" as const } } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.subscription.findMany({
+        where,
+        include: {
+          price: { include: { plan: true } },
+          customer: { select: { id: true, externalId: true, email: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: page.limit,
+        skip: page.skip,
+      }),
+      prisma.subscription.count({ where }),
+    ]);
+
+    return success(paginated(items, page, total), request.requestId);
   });
 
   app.get("/v1/subscriptions/:subscriptionId", async (request) => {

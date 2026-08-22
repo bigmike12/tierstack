@@ -36,7 +36,8 @@ export default async function ProvidersPage() {
               <CardHeader>
                 <CardTitle>No provider configured</CardTitle>
                 <CardDescription>
-                  Add the mock rail to run the whole billing lifecycle locally with no credentials at all.
+                  Add the mock rail to run the whole billing lifecycle locally with no credentials at all,
+                  or Paystack with a test secret key.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -74,10 +75,10 @@ export default async function ProvidersPage() {
                       </div>
                     ) : (
                       <p className="rounded-md border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
-                        The {config.provider} adapter is phase 3 and is not implemented in this build. Its
-                        configuration is stored, but the billing engine reports no capabilities for it rather
-                        than advertising a set it cannot honour — and any operation returns
-                        NOT_IMPLEMENTED.
+                        The {config.provider} adapter is not written yet. Its configuration is stored, but
+                        the billing engine reports no capabilities for it rather than advertising a set it
+                        cannot honour — and any operation returns NOT_IMPLEMENTED rather than failing
+                        halfway through a charge.
                       </p>
                     )}
                   </CardContent>

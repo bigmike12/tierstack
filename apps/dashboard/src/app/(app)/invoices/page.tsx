@@ -1,22 +1,31 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { StatusBadge } from "@/components/status-badge";
+import { Pagination } from "@/components/ui/pagination";
 import { EmptyState, PageHeader } from "@/components/ui/shell";
+import { SearchInput } from "@/components/ui/table-toolbar";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate } from "@/lib/format";
+import { emptyPage, listQuery, type Paged } from "@/lib/list";
 import type { Invoice } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Invoices" };
 
+const FILTERS = ["OPEN", "PAID", "VOID", "UNCOLLECTIBLE"];
+
 export default async function InvoicesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; page?: string; q?: string }>;
 }) {
-  const { status } = await searchParams;
-  const query = status ? `?status=${encodeURIComponent(status)}&limit=100` : "?limit=100";
-  const invoices = (await apiFetchOrNull<Invoice[]>(`/v1/invoices${query}`)) ?? [];
+  const { status, page, q } = await searchParams;
+
+  const result =
+    (await apiFetchOrNull<Paged<Invoice>>(`/v1/invoices${listQuery({ status, page, q, limit: 25 })}`)) ??
+    emptyPage<Invoice>();
+
+  const filterHref = (next?: string) => `/invoices${listQuery({ status: next, q })}`;
 
   return (
     <>
@@ -25,26 +34,32 @@ export default async function InvoicesPage({
         description="Every billing cycle produces one. Numbers are sequential per organization per year."
       />
 
-      <div className="flex flex-wrap gap-2 pb-4">
-        <Link
-          href="/invoices"
-          className={`rounded-full border px-3 py-1 text-xs ${!status ? "border-foreground bg-secondary" : "border-border text-muted-foreground hover:bg-muted"}`}
-        >
-          All
-        </Link>
-        {["OPEN", "PAID", "VOID", "UNCOLLECTIBLE"].map((filter) => (
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
+        <div className="flex flex-wrap gap-2">
           <Link
-            key={filter}
-            href={`/invoices?status=${filter}`}
-            className={`rounded-full border px-3 py-1 text-xs ${status === filter ? "border-foreground bg-secondary" : "border-border text-muted-foreground hover:bg-muted"}`}
+            href={filterHref()}
+            className={`rounded-full border px-3 py-1 text-xs ${!status ? "border-foreground bg-secondary" : "border-border text-muted-foreground hover:bg-muted"}`}
           >
-            {filter.toLowerCase()}
+            All
           </Link>
-        ))}
+          {FILTERS.map((filter) => (
+            <Link
+              key={filter}
+              href={filterHref(filter)}
+              className={`rounded-full border px-3 py-1 text-xs ${status === filter ? "border-foreground bg-secondary" : "border-border text-muted-foreground hover:bg-muted"}`}
+            >
+              {filter.toLowerCase()}
+            </Link>
+          ))}
+        </div>
+        <SearchInput placeholder="Search number or customer…" />
       </div>
 
-      {invoices.length === 0 ? (
-        <EmptyState title="No invoices" description="Nothing matches this filter yet." />
+      {result.items.length === 0 ? (
+        <EmptyState
+          title="No invoices"
+          description={q ? `Nothing matches “${q}”.` : "Nothing matches this filter yet."}
+        />
       ) : (
         <div className="rounded-lg border border-border bg-card">
           <Table>
@@ -60,7 +75,7 @@ export default async function InvoicesPage({
               </TR>
             </THead>
             <TBody>
-              {invoices.map((invoice) => (
+              {result.items.map((invoice) => (
                 <TR key={invoice.id}>
                   <TD>
                     <Link href={`/invoices/${invoice.id}`} className="font-mono text-xs underline-offset-4 hover:underline">
@@ -83,6 +98,7 @@ export default async function InvoicesPage({
               ))}
             </TBody>
           </Table>
+          <Pagination meta={result} basePath="/invoices" params={{ status, q }} />
         </div>
       )}
     </>

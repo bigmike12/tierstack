@@ -29,6 +29,18 @@ async function main(): Promise<void> {
     throw new Error("Run `npm run db:seed` first — no seeded organization found.");
   }
 
+  // Running this twice is not harmless: subscription creation is idempotent,
+  // but the renewals are not, so a second pass advances billing periods past
+  // the usage events the first pass recorded and every meter then reads zero.
+  // Refuse rather than leave a confusing dataset behind.
+  const existing = await prisma.subscription.count({ where: { organizationId: organization.id } });
+  if (existing > 0) {
+    throw new Error(
+      `This organization already has ${existing} subscriptions. Demo data is not idempotent — ` +
+        "run `npm run db:reset && npm run db:seed` first, then this script."
+    );
+  }
+
   const { app } = await buildServer({ NODE_ENV: "test" } as never);
   await app.ready();
 
@@ -106,14 +118,14 @@ async function main(): Promise<void> {
 
   console.log("Renewing one subscriber into a second period…");
   const active = await call("GET", "/v1/subscriptions?status=ACTIVE&limit=1");
-  const first = active.data?.[0];
+  const first = active.data?.items?.[0];
   if (first) {
     await call("POST", `/v1/subscriptions/${first.id}/renew`, {});
     console.log(`  ${first.customer?.externalId} renewed on its stored card`);
   }
 
   console.log("Upgrading a subscriber (proration)…");
-  const toUpgrade = (await call("GET", "/v1/subscriptions?status=ACTIVE&limit=5")).data?.find(
+  const toUpgrade = (await call("GET", "/v1/subscriptions?status=ACTIVE&limit=5")).data?.items?.find(
     (s: Json) => s.price?.code === "starter_monthly_ngn"
   );
   if (toUpgrade) {
@@ -216,6 +228,25 @@ async function main(): Promise<void> {
     { "idempotency-key": "demo-trial" }
   );
   console.log("  Ifeoma Nwosu → TRIALING");
+
+  // Enough customers that the tables and the customer picker are exercised past
+  // one screenful. A dashboard that only ever holds ten rows never shows you
+  // whether paging and search actually work.
+  console.log("Filling out the customer list so paging and search have something to do…");
+  const FIRST = ["Ada", "Chidi", "Zainab", "Tunde", "Amara", "Kwame", "Nneka", "Femi", "Halima", "Obi"];
+  const LAST = ["Okafor", "Mensah", "Bello", "Achebe", "Danjuma", "Osei", "Eze", "Sadiq"];
+
+  for (let index = 0; index < 48; index += 1) {
+    const first = FIRST[index % FIRST.length]!;
+    const last = LAST[Math.floor(index / FIRST.length) % LAST.length]!;
+    await call("POST", "/v1/customers", {
+      externalId: `user_9${String(index).padStart(4, "0")}`,
+      email: `${first.toLowerCase()}.${last.toLowerCase()}${index}@example.test`,
+      name: `${first} ${last}`,
+      country: index % 3 === 0 ? "NG" : index % 3 === 1 ? "KE" : "GH",
+    });
+  }
+  console.log("  48 further customers created (no subscriptions — they are list fodder)");
 
   const counts = await prisma.subscription.groupBy({
     by: ["status"],

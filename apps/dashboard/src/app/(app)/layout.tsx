@@ -19,17 +19,20 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const current = organizations[0];
 
   return (
-    <div className="flex min-h-screen">
-      <div className="hidden w-60 shrink-0 border-r border-border bg-card/60 md:block">
-        <div className="flex h-14 items-center border-b border-border px-5">
+    <div className="flex h-dvh overflow-hidden">
+      <div className="hidden w-60 shrink-0 flex-col border-r border-border bg-card/60 md:flex">
+        <div className="flex h-14 shrink-0 items-center border-b border-border px-5">
           <Link href="/overview" className="min-w-0 text-sm">
             <Wordmark name={appName} />
           </Link>
         </div>
-        <Sidebar />
+        {/* Long nav lists scroll within the sidebar rather than pushing the page. */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <Sidebar />
+        </div>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border px-5">
           <div className="flex min-w-0 items-center gap-3">
             <OrgSwitcher organizations={organizations} currentId={current?.id ?? ""} />
@@ -50,7 +53,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 px-5 py-6 lg:px-8 lg:py-8">{children}</main>
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-6 lg:px-8 lg:py-8">{children}</main>
       </div>
     </div>
   );

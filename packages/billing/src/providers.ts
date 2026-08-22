@@ -10,6 +10,7 @@ import {
   type RoutingRequest,
 } from "@tierbase/payments-core";
 import { MockPaymentProvider, RedisMockStore, type RedisLike } from "@tierbase/payments-mock";
+import { PaystackPaymentProvider } from "@tierbase/payments-paystack";
 import { BillingError, loadBranding, type CurrencyCode } from "@tierbase/shared";
 
 export interface ProviderFactoryDeps {
@@ -34,9 +35,9 @@ export interface StoredProviderConfig {
 /**
  * Turns a stored, encrypted provider configuration into a live adapter.
  *
- * Only the mock rail is built in this phase. Paystack, Monnify and Flutterwave
- * adapters are phase 3; asking for one here fails with an explicit error rather
- * than returning something that pretends to work.
+ * Mock and Paystack are built. Monnify and Flutterwave are not written yet;
+ * asking for one here fails with an explicit error rather than returning
+ * something that pretends to work.
  */
 export function instantiateProvider(
   config: StoredProviderConfig,
@@ -56,13 +57,36 @@ export function instantiateProvider(
         webhookSecret: credentials.webhookSecret ?? "whsec_mock",
         checkoutBaseUrl: deps.checkoutBaseUrl ?? loadBranding().apiUrl,
       });
-    case "PAYSTACK":
+    case "PAYSTACK": {
+      const secretKey = credentials.secretKey ?? credentials.secret_key;
+      if (!secretKey) {
+        throw new BillingError(
+          "PROVIDER_ERROR",
+          "The Paystack configuration has no secretKey. Add it in the dashboard; " +
+            "Paystack signs webhooks with the same key, so nothing can be verified without it."
+        );
+      }
+      // Paystack has no separate test host: the key itself selects the mode, so
+      // a sk_test_ key in a LIVE configuration is a misconfiguration worth
+      // catching here rather than on the first real charge.
+      if (config.environment === "LIVE" && secretKey.startsWith("sk_test_")) {
+        throw new BillingError(
+          "PROVIDER_ERROR",
+          "A Paystack test key is configured against the LIVE environment."
+        );
+      }
+      return new PaystackPaymentProvider({
+        secretKey,
+        ...(credentials.publicKey ? { publicKey: credentials.publicKey } : {}),
+        ...(credentials.baseUrl ? { baseUrl: credentials.baseUrl } : {}),
+      });
+    }
     case "MONNIFY":
     case "FLUTTERWAVE":
       throw new BillingError(
         "NOT_IMPLEMENTED",
-        `The ${config.provider} adapter is not part of this build (phase 3). ` +
-          "Configure the MOCK provider to run the full billing lifecycle locally."
+        `The ${config.provider} adapter is not written yet. ` +
+          "Configure MOCK for local development, or PAYSTACK for a real rail."
       );
   }
 }

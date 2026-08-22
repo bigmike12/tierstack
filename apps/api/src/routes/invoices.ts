@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@tierbase/database";
 import { attemptInvoicePayment, voidInvoice } from "@tierbase/billing";
-import { BillingError, success } from "@tierbase/shared";
+import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { environmentOf, requireOrganization, requireSecretKeyOrUser } from "../context";
@@ -17,28 +17,48 @@ export function registerInvoiceRoutes(
 ): void {
   const providerDeps = { redis, checkoutBaseUrl: config.API_URL, encryptionKey: config.ENCRYPTION_KEY };
 
+  /**
+   * Paginated list. `q` matches the invoice number or the customer it is
+   * addressed to.
+   */
   app.get("/v1/invoices", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as {
+    const query = request.query as Record<string, unknown> & {
       customerId?: string;
       subscriptionId?: string;
       status?: string;
-      limit?: string;
     };
-    const limit = Math.min(Number(query.limit ?? 50), 100);
+    const page = parsePageQuery(query, { defaultLimit: 25 });
 
-    const invoices = await prisma.invoice.findMany({
-      where: {
-        organizationId,
-        ...(query.customerId ? { customerId: query.customerId } : {}),
-        ...(query.subscriptionId ? { subscriptionId: query.subscriptionId } : {}),
-        ...(query.status ? { status: query.status as never } : {}),
-      },
-      include: { lineItems: true },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    });
-    return success(invoices, request.requestId);
+    const where = {
+      organizationId,
+      ...(query.customerId ? { customerId: query.customerId } : {}),
+      ...(query.subscriptionId ? { subscriptionId: query.subscriptionId } : {}),
+      ...(query.status ? { status: query.status as never } : {}),
+      ...(page.q
+        ? {
+            OR: [
+              { invoiceNumber: { contains: page.q, mode: "insensitive" as const } },
+              { customer: { externalId: { contains: page.q, mode: "insensitive" as const } } },
+              { customer: { email: { contains: page.q, mode: "insensitive" as const } } },
+              { customer: { name: { contains: page.q, mode: "insensitive" as const } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.invoice.findMany({
+        where,
+        include: { lineItems: true },
+        orderBy: { createdAt: "desc" },
+        take: page.limit,
+        skip: page.skip,
+      }),
+      prisma.invoice.count({ where }),
+    ]);
+
+    return success(paginated(items, page, total), request.requestId);
   });
 
   app.get("/v1/invoices/:invoiceId", async (request) => {
@@ -128,33 +148,44 @@ export function registerInvoiceRoutes(
     return success(voided, request.requestId);
   });
 
+  /** Paginated list. `q` matches the provider reference or the failure code. */
   app.get("/v1/payment-attempts", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as { invoiceId?: string; customerId?: string; limit?: string };
-    const attempts = await prisma.paymentAttempt.findMany({
-      where: {
-        organizationId,
-        ...(query.invoiceId ? { invoiceId: query.invoiceId } : {}),
-        ...(query.customerId ? { customerId: query.customerId } : {}),
-      },
-      orderBy: { createdAt: "desc" },
-      take: Math.min(Number(query.limit ?? 50), 100),
-      select: {
-        id: true,
-        invoiceId: true,
-        customerId: true,
-        provider: true,
-        amount: true,
-        currency: true,
-        status: true,
-        attemptNumber: true,
-        failureCode: true,
-        failureReason: true,
-        providerReference: true,
-        createdAt: true,
-        completedAt: true,
-      },
-    });
-    return success(attempts, request.requestId);
+    const query = request.query as Record<string, unknown> & { invoiceId?: string; customerId?: string };
+    const page = parsePageQuery(query, { defaultLimit: 25 });
+
+    const where = {
+      organizationId,
+      ...(query.invoiceId ? { invoiceId: query.invoiceId } : {}),
+      ...(query.customerId ? { customerId: query.customerId } : {}),
+      ...(searchFilter(page.q, ["providerReference", "failureCode", "failureReason"]) ?? {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.paymentAttempt.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: page.limit,
+        skip: page.skip,
+        select: {
+          id: true,
+          invoiceId: true,
+          customerId: true,
+          provider: true,
+          amount: true,
+          currency: true,
+          status: true,
+          attemptNumber: true,
+          failureCode: true,
+          failureReason: true,
+          providerReference: true,
+          createdAt: true,
+          completedAt: true,
+        },
+      }),
+      prisma.paymentAttempt.count({ where }),
+    ]);
+
+    return success(paginated(items, page, total), request.requestId);
   });
 }

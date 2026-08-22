@@ -34,9 +34,9 @@ export function ProviderForm() {
       <Field label="Provider">
         <Select name="provider" defaultValue="MOCK">
           <option value="MOCK">Mock (local development)</option>
-          <option value="PAYSTACK">Paystack — adapter is phase 3</option>
-          <option value="FLUTTERWAVE">Flutterwave — adapter is phase 3</option>
-          <option value="MONNIFY">Monnify — adapter is phase 3</option>
+          <option value="PAYSTACK">Paystack</option>
+          <option value="FLUTTERWAVE">Flutterwave — adapter not written yet</option>
+          <option value="MONNIFY">Monnify — adapter not written yet</option>
         </Select>
       </Field>
 
@@ -49,7 +49,13 @@ export function ProviderForm() {
 
       <Field
         label="Credentials"
-        hint="One KEY=value per line. Encrypted before storage and never returned by the API. Leave blank for the mock rail."
+        hint={
+          <>
+            One KEY=value per line. Encrypted before storage and never returned by the API. Leave blank for
+            the mock rail. Paystack needs <code className="font-mono">secretKey</code> — the same key signs
+            its webhooks, so nothing can be verified without it.
+          </>
+        }
       >
         <textarea
           name="credentials"

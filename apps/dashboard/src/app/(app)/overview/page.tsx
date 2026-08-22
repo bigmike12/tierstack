@@ -6,16 +6,20 @@ import { StatusBadge } from "@/components/status-badge";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate } from "@/lib/format";
+import type { Paged } from "@/lib/list";
 import type { Invoice, OverviewMetrics, Subscription } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Overview" };
 
 export default async function OverviewPage() {
-  const [metrics, subscriptions, invoices] = await Promise.all([
+  const [metrics, subscriptionPage, invoicePage] = await Promise.all([
     apiFetchOrNull<OverviewMetrics>("/v1/metrics/overview"),
-    apiFetchOrNull<Subscription[]>("/v1/subscriptions?limit=6"),
-    apiFetchOrNull<Invoice[]>("/v1/invoices?limit=6"),
+    apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?limit=6"),
+    apiFetchOrNull<Paged<Invoice>>("/v1/invoices?limit=6"),
   ]);
+
+  const subscriptions = subscriptionPage?.items ?? null;
+  const invoices = invoicePage?.items ?? null;
 
   if (!metrics) {
     return (

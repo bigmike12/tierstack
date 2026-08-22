@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { applyPaymentResult, instantiateProvider } from "@tierbase/billing";
 import type { PrismaClient } from "@tierbase/database";
-import { BillingError, newId, success } from "@tierbase/shared";
+import { BillingError, newId, paginated, parsePageQuery, searchFilter, success } from "@tierbase/shared";
 import type { FastifyInstance } from "fastify";
 import { requireOrganization } from "../context";
 import type { AppConfig } from "../env";
@@ -160,34 +160,44 @@ export function registerWebhookRoutes(
 
 /** Read model for the dashboard's webhook log. */
 export function registerWebhookEventRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+  /** Paginated list. `q` matches the event type or the provider's own event id. */
   app.get("/v1/webhook-events", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as { status?: string; provider?: string; limit?: string };
+    const query = request.query as Record<string, unknown> & { status?: string; provider?: string };
+    const page = parsePageQuery(query, { defaultLimit: 25, maxLimit: 200 });
 
-    const events = await prisma.webhookEvent.findMany({
-      where: {
-        organizationId,
-        ...(query.status ? { status: query.status as never } : {}),
-        ...(query.provider ? { provider: query.provider as never } : {}),
-      },
-      orderBy: { receivedAt: "desc" },
-      take: Math.min(Number(query.limit ?? 50), 200),
-      // The raw payload is deliberately excluded from the list view; it can
-      // carry provider detail that has no business being rendered in a table.
-      select: {
-        id: true,
-        provider: true,
-        providerEventId: true,
-        eventType: true,
-        signatureVerified: true,
-        status: true,
-        processingAttempts: true,
-        errorMessage: true,
-        receivedAt: true,
-        processedAt: true,
-      },
-    });
-    return success(events, request.requestId);
+    const where = {
+      organizationId,
+      ...(query.status ? { status: query.status as never } : {}),
+      ...(query.provider ? { provider: query.provider as never } : {}),
+      ...(searchFilter(page.q, ["eventType", "providerEventId", "errorMessage"]) ?? {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.webhookEvent.findMany({
+        where,
+        orderBy: { receivedAt: "desc" },
+        take: page.limit,
+        skip: page.skip,
+        // The raw payload is deliberately excluded from the list view; it can
+        // carry provider detail that has no business being rendered in a table.
+        select: {
+          id: true,
+          provider: true,
+          providerEventId: true,
+          eventType: true,
+          signatureVerified: true,
+          status: true,
+          processingAttempts: true,
+          errorMessage: true,
+          receivedAt: true,
+          processedAt: true,
+        },
+      }),
+      prisma.webhookEvent.count({ where }),
+    ]);
+
+    return success(paginated(items, page, total), request.requestId);
   });
 }
 

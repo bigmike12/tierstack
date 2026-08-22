@@ -1,7 +1,7 @@
 import { lookupCustomer } from "@tierbase/billing";
 import type { PrismaClient } from "@tierbase/database";
 import { EntitlementCache } from "@tierbase/entitlements";
-import { BillingError, success } from "@tierbase/shared";
+import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierbase/shared";
 import { createMeter, listCustomerUsage, trackUsage } from "@tierbase/usage";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -183,10 +183,11 @@ export function registerUsageRoutes(
     );
   });
 
-  /** Raw events, for debugging an ingestion integration. */
+  /** Raw events, for debugging an ingestion integration. Paginated. */
   app.get("/v1/usage/events", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as { customerId?: string; meter?: string; limit?: string };
+    const query = request.query as Record<string, unknown> & { customerId?: string; meter?: string };
+    const page = parsePageQuery(query, { defaultLimit: 25, maxLimit: 500 });
 
     const meter = query.meter
       ? await prisma.usageMeter.findUnique({
@@ -194,17 +195,30 @@ export function registerUsageRoutes(
         })
       : null;
 
-    const events = await prisma.usageEvent.findMany({
-      where: {
-        organizationId,
-        ...(query.customerId ? { customerId: query.customerId } : {}),
-        ...(meter ? { meterId: meter.id } : {}),
-      },
-      orderBy: { timestamp: "desc" },
-      take: Math.min(Number(query.limit ?? 100), 500),
-      include: { meter: { select: { code: true, unitLabel: true } } },
-    });
-    return success(events, request.requestId);
+    const where = {
+      organizationId,
+      ...(query.customerId ? { customerId: query.customerId } : {}),
+      ...(meter ? { meterId: meter.id } : {}),
+      ...(searchFilter(page.q, ["eventId"]) ?? {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.usageEvent.findMany({
+        where,
+        orderBy: { timestamp: "desc" },
+        take: page.limit,
+        skip: page.skip,
+        include: {
+          meter: { select: { code: true, unitLabel: true } },
+          // The customer is included so a caller can tell which customers have
+          // consumption without a lookup per event.
+          customer: { select: { id: true, externalId: true, email: true, name: true } },
+        },
+      }),
+      prisma.usageEvent.count({ where }),
+    ]);
+
+    return success(paginated(items, page, total), request.requestId);
   });
 }
 

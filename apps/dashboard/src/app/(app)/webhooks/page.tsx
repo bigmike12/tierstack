@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pagination } from "@/components/ui/pagination";
 import { EmptyState, Mono, PageHeader } from "@/components/ui/shell";
+import { SearchInput } from "@/components/ui/table-toolbar";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { emptyPage, listQuery, type Paged } from "@/lib/list";
 
 export const metadata: Metadata = { title: "Webhooks" };
 
@@ -23,8 +26,16 @@ interface WebhookEvent {
 
 const ENDPOINTS = ["mock", "paystack", "monnify", "flutterwave"];
 
-export default async function WebhooksPage() {
-  const events = (await apiFetchOrNull<WebhookEvent[]>("/v1/webhook-events?limit=100")) ?? [];
+export default async function WebhooksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string; q?: string }>;
+}) {
+  const { page, q } = await searchParams;
+  const result =
+    (await apiFetchOrNull<Paged<WebhookEvent>>(
+      `/v1/webhook-events${listQuery({ page, q, limit: 25 })}`
+    )) ?? emptyPage<WebhookEvent>();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? process.env.API_URL ?? "http://localhost:4000";
 
   return (
@@ -49,15 +60,20 @@ export default async function WebhooksPage() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
           <CardTitle>Recent events</CardTitle>
+          <SearchInput placeholder="Search event type or id…" />
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          {events.length === 0 ? (
+          {result.items.length === 0 ? (
             <div className="px-5 pb-5">
               <EmptyState
-                title="No webhooks received"
-                description="Complete a payment through the mock checkout to see one arrive."
+                title={q ? "No matches" : "No webhooks received"}
+                description={
+                  q
+                    ? `No webhook events match “${q}”.`
+                    : "Complete a payment through the mock checkout to see one arrive."
+                }
               />
             </div>
           ) : (
@@ -73,7 +89,7 @@ export default async function WebhooksPage() {
                 </TR>
               </THead>
               <TBody>
-                {events.map((event) => (
+                {result.items.map((event) => (
                   <TR key={event.id}>
                     <TD className="text-muted-foreground">{event.provider}</TD>
                     <TD>
@@ -98,6 +114,9 @@ export default async function WebhooksPage() {
               </TBody>
             </Table>
           )}
+          {result.items.length > 0 ? (
+            <Pagination meta={result} basePath="/webhooks" params={{ q }} />
+          ) : null}
           <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
             Events are unique on organization + provider + provider event id, so a replayed delivery is
             acknowledged and ignored rather than processed twice.

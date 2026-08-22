@@ -140,16 +140,42 @@ async function main(): Promise<void> {
   const tested = await call("POST", `/v1/payment-providers/${listed.id}/test`, { headers: asUser() });
   check("credentials can be tested", tested.body.data?.ok === true);
 
-  const unsupportedProvider = await call("POST", "/v1/payment-providers", {
+  // Paystack is implemented, so it must report its real capability set — and
+  // must report `false` for the one it does not implement rather than claiming
+  // it. No network call is made here; capabilities are static.
+  const paystackConfig = await call("POST", "/v1/payment-providers", {
     headers: asUser(),
-    payload: { provider: "PAYSTACK", environment: "TEST", credentials: { secretKey: "sk_x" } },
+    payload: { provider: "PAYSTACK", environment: "TEST", credentials: { secretKey: "sk_test_e2e" } },
   });
   const paystackListed = (await call("GET", "/v1/payment-providers", { headers: asUser() })).body.data.find(
     (c: Json) => c.provider === "PAYSTACK"
   );
-  check("an unimplemented adapter reports no capabilities rather than faking them",
-    unsupportedProvider.status === 201 && paystackListed?.capabilities === null);
+  check(
+    "an implemented adapter reports its real capabilities",
+    paystackConfig.status === 201 && paystackListed?.capabilities?.recurringCard === true,
+    paystackListed?.capabilities
+  );
+  check(
+    "a capability the adapter does not implement is reported false, not omitted",
+    paystackListed?.capabilities?.directDebit === false
+  );
+
+  // A Paystack config with no secret key cannot be built at all — the same key
+  // signs webhooks, so nothing could be verified.
+  const keylessPaystack = await call("POST", "/v1/payment-providers", {
+    headers: asUser(),
+    payload: { provider: "FLUTTERWAVE", environment: "TEST", credentials: { apiKey: "x" } },
+  });
+  const flutterwaveListed = (
+    await call("GET", "/v1/payment-providers", { headers: asUser() })
+  ).body.data.find((c: Json) => c.provider === "FLUTTERWAVE");
+  check(
+    "an unimplemented adapter reports no capabilities rather than faking them",
+    keylessPaystack.status === 201 && flutterwaveListed?.capabilities === null
+  );
+
   await call("DELETE", `/v1/payment-providers/${paystackListed.id}`, { headers: asUser() });
+  await call("DELETE", `/v1/payment-providers/${flutterwaveListed.id}`, { headers: asUser() });
 
   // -- 4. API keys -----------------------------------------------------------
   section("4. API keys");
@@ -306,8 +332,12 @@ async function main(): Promise<void> {
   check("subscription stays active", renewed.body.data?.subscription?.status === "ACTIVE");
 
   const invoices = await call("GET", `/v1/invoices?subscriptionId=${subscriptionId}`, { headers: asKey() });
-  check("two invoices now exist", invoices.body.data.length === 2);
-  check("invoice numbers are sequential", invoices.body.data.map((i: Json) => i.invoiceNumber).every((n: string) => n.startsWith("INV-")));
+  check("two invoices now exist", invoices.body.data.items.length === 2);
+  check("the list reports its own total", invoices.body.data.total === 2, invoices.body.data);
+  check(
+    "invoice numbers are sequential",
+    invoices.body.data.items.map((i: Json) => i.invoiceNumber).every((n: string) => n.startsWith("INV-"))
+  );
 
   // -- 10. Plan change and proration -----------------------------------------
   section("10. Plan change and proration");
@@ -792,8 +822,74 @@ async function main(): Promise<void> {
   const afterRevoke = await call("GET", "/v1/plans", { headers: asKey() });
   check("a revoked key stops working immediately", afterRevoke.body.error?.code === "API_KEY_REVOKED", afterRevoke.body);
 
-  // -- 16. Audit trail -------------------------------------------------------
-  section("16. Audit trail");
+  // -- 16. Pagination and search --------------------------------------------
+  section("16. Pagination and search");
+
+  const firstPage = await call("GET", "/v1/customers?limit=2", { headers: asUser() });
+  check("a page is capped at the requested limit", firstPage.body.data.items.length <= 2, firstPage.body.data);
+  check("the envelope reports page, limit and total",
+    firstPage.body.data.page === 1 &&
+      firstPage.body.data.limit === 2 &&
+      typeof firstPage.body.data.total === "number",
+    firstPage.body.data
+  );
+  check(
+    "totalPages is derived from the total, not the page",
+    firstPage.body.data.totalPages === Math.max(1, Math.ceil(firstPage.body.data.total / 2)),
+    firstPage.body.data
+  );
+
+  const secondPage = await call("GET", "/v1/customers?limit=2&page=2", { headers: asUser() });
+  const firstIds = new Set(firstPage.body.data.items.map((c: Json) => c.id));
+  check(
+    "page 2 returns different rows to page 1",
+    secondPage.body.data.items.every((c: Json) => !firstIds.has(c.id)),
+    secondPage.body.data.items.map((c: Json) => c.id)
+  );
+
+  const searched = await call("GET", "/v1/customers?q=user_explicit", { headers: asUser() });
+  check(
+    "search matches on the developer's own id",
+    searched.body.data.items.length > 0 &&
+      searched.body.data.items.every((c: Json) => String(c.externalId ?? "").includes("user_explicit")),
+    searched.body.data.items
+  );
+
+  const noMatch = await call("GET", "/v1/customers?q=zzz-no-such-customer", { headers: asUser() });
+  check("a search with no matches returns an empty page, not an error",
+    noMatch.body.data.items.length === 0 && noMatch.body.data.total === 0,
+    noMatch.body
+  );
+
+  // A page number nobody typed on purpose must not 500 the dashboard.
+  const garbage = await call("GET", "/v1/customers?page=not-a-number&limit=abc", { headers: asUser() });
+  check(
+    "an unparseable page falls back to page one",
+    garbage.body.data.page === 1 && garbage.body.data.limit === 25,
+    garbage.body.data
+  );
+
+  const overLimit = await call("GET", "/v1/customers?limit=100000", { headers: asUser() });
+  check("limit is clamped so one request cannot ask for everything", overLimit.body.data.limit === 100);
+
+  const searchedSubs = await call("GET", "/v1/subscriptions?q=user_explicit", { headers: asUser() });
+  check(
+    "subscriptions can be searched by their customer",
+    Array.isArray(searchedSubs.body.data.items),
+    searchedSubs.body
+  );
+
+  const otherOrgPage = await call("GET", "/v1/customers?limit=100", {
+    headers: { authorization: `Bearer ${otherKey}` },
+  });
+  check(
+    "pagination never crosses a tenant boundary",
+    otherOrgPage.body.data.items.every((c: Json) => !firstIds.has(c.id)),
+    otherOrgPage.body.data.total
+  );
+
+  // -- 17. Audit trail -------------------------------------------------------
+  section("17. Audit trail");
 
   const auditRows = await prisma.auditLog.findMany({ where: { organizationId } });
   const actions = new Set(auditRows.map((r) => r.action));

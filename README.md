@@ -40,12 +40,17 @@ against a real database.
 | Entitlement engine: boolean, limit, unlimited and usage features, Redis fast path | Complete |
 | Metered billing: `USAGE_METERED` and `HYBRID` prices bill consumption in arrears | Complete |
 | Dashboard: auth, section-57 navigation, and every page with an API behind it | Complete |
+| Paginated, searchable list endpoints and dashboard tables | Complete |
+| Plan and price creation, editing and archiving from the dashboard | Complete |
+| Paystack adapter: checkout, verification, recurring charge, refunds, payment pages, signed webhooks | Implemented; **not yet exercised against live Paystack** |
 
 **Deliberately not built yet** — and, importantly, not faked:
 
 | Area | Behaviour today |
 | --- | --- |
-| Paystack / Monnify / Flutterwave adapters (phase 3) | A configuration can be stored, but instantiating the adapter returns `NOT_IMPLEMENTED` and its capabilities report as `null`. |
+| Monnify / Flutterwave adapters | A configuration can be stored, but instantiating the adapter returns `NOT_IMPLEMENTED` and its capabilities report as `null`. |
+| Paystack against the real API | The adapter is written and unit-tested against a recorded transport. It has **not** been run against api.paystack.co — that needs a test-mode secret key and a live transaction, which this build has never had. Treat the first real checkout as the verification step. |
+| Paystack direct debit | Mandate creation is not implemented, so the adapter reports `directDebit: false` and the engine never routes to it. |
 | Automated dunning retries (phase 4) | Grace periods open and close on the developer's configured policy; the *scheduled* retry ladder is not yet wired. Retry today is `POST /v1/invoices/:id/pay`. |
 | Customer portal, TypeScript/React SDKs, `/llms.txt` (phase 5) | Not present. The API they would sit on is. |
 | Coupons, referrals, credit ledger (phase 6) | Schema exists; no engine. |
@@ -421,13 +426,12 @@ tierbase/
 The build order continues at step 11. Recommended order, which deviates from the
 spec in one place:
 
-1. **Step 13 — the Paystack adapter**, pulled ahead of dunning. Until one real
-   rail exists nothing can be put in front of a paying user, and what a real
-   provider's webhooks and failure codes actually look like will reshape the
-   dunning work. It is a new file under `packages/payments/`, with no change to
-   the billing engine.
+1. **Verify Paystack against the real API.** Put a test-mode secret key into
+   the dashboard, run one checkout end to end, and point a Paystack test webhook
+   at `/webhooks/paystack`. Everything below waits on what that turns up —
+   recorded fixtures are not evidence that a live integration works.
 2. **Step 11 — the scheduled retry ladder.** Dunning only earns its keep once
-   real payments fail, so it is worth doing after a real rail exists.
+   real payments fail, so it is worth doing after a real rail is proven.
 3. **Steps 16–20** — the customer portal, the SDKs, coupons and referrals.
 
 Not in the specification but needed before launch: transactional email (dunning

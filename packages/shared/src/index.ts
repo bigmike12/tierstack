@@ -5,4 +5,5 @@ export * from "./money";
 export * from "./interval";
 export * from "./ids";
 export * from "./envelope";
+export * from "./pagination";
 export * from "./redact";

@@ -10,6 +10,8 @@
   "dependencies": {
     "@tierbase/database": "0.1.0",
     "@tierbase/payments-core": "0.1.0",
+    "@tierbase/payments-mock": "0.1.0",
+    "@tierbase/payments-paystack": "0.1.0",
     "@tierbase/shared": "0.1.0",
     "@tierbase/usage": "0.1.0",
     "zod": "^3.24.1"
