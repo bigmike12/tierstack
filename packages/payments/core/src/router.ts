@@ -51,7 +51,28 @@ export function routePayment(
   const rejected: { kind: ProviderKind; reason: string }[] = [];
   const eligible: RoutableProvider[] = [];
 
+  /**
+   * Falling over from one real rail to another is the point of routing. Falling
+   * over to the mock rail is not: it moves no money, so a Paystack outage would
+   * "collect" the payment, mark the invoice PAID and grant the customer service
+   * they never paid for. A real failure is always better than a fake success.
+   *
+   * So the mock rail is eligible only when it is the only rail there is — which
+   * is exactly the local-development case it exists for.
+   */
+  const hasRealRail = providers.some((p) => p.enabled && p.kind !== "MOCK");
+
   for (const candidate of providers) {
+    if (candidate.kind === "MOCK" && hasRealRail) {
+      rejected.push({
+        kind: candidate.kind,
+        reason:
+          "The mock rail is never used while a real provider is configured — it would " +
+          "report a payment that never happened.",
+      });
+      continue;
+    }
+
     const reason = ineligibilityReason(candidate, request);
     if (reason) {
       rejected.push({ kind: candidate.kind, reason });

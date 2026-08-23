@@ -130,22 +130,31 @@ async function main(): Promise<void> {
     paystack.capabilities?.directDebit === false
   );
 
-  // Routing sorts on priority with isDefault worth -100, so a default MOCK rail
-  // silently wins every payment and Paystack is never called at all.
-  const mock = configs.find((c) => c.provider === "MOCK" && c.enabled);
-  const paystackWins = paystack.isDefault === true || !mock;
-  if (
-    !check(
-      "Paystack will win the routing",
-      paystackWins,
-      { paystackIsDefault: paystack.isDefault, mockStillEnabled: Boolean(mock) }
-    )
-  ) {
-    console.error(
-      "\nMOCK is still the default rail, so it will take this payment instead.\n" +
-        "Re-save Paystack with 'Make this the default rail' ticked, or remove MOCK.\n"
+  // The router scores each rail as `priority - (isDefault ? 100 : 0)` and takes
+  // the lowest. Reproducing that here is the only way to know which rail will
+  // actually be used — "Paystack is the default" is not sufficient on its own,
+  // because a seeded MOCK sits at priority 10 while the dashboard creates new
+  // providers at 100.
+  const scored = configs
+    .filter((c) => c.enabled)
+    .map((c) => ({ kind: c.provider, score: c.priority - (c.isDefault ? 100 : 0), priority: c.priority, isDefault: c.isDefault }))
+    .sort((a, b) => a.score - b.score);
+
+  for (const rail of scored) {
+    note(
+      `${String(rail.kind).padEnd(12)} priority ${String(rail.priority).padEnd(4)} ` +
+        `default ${String(rail.isDefault).padEnd(5)} → score ${rail.score}`
     );
-    process.exit(1);
+  }
+
+  check("Paystack ranks first", scored[0]?.kind === "PAYSTACK", scored);
+
+  const mock = configs.find((c) => c.provider === "MOCK" && c.enabled);
+  if (mock) {
+    note("");
+    note("MOCK is still enabled. Since the mock rail moves no money, a Paystack");
+    note("failure would otherwise fall through to it and mark the invoice paid.");
+    note("Delete the MOCK provider once Paystack is verified.");
   }
 
   // -- 3. Credentials ----------------------------------------------------------
@@ -207,7 +216,27 @@ async function main(): Promise<void> {
   const invoiceId = created.data.invoiceId;
   const payment = created.data.payment;
 
-  check("Paystack was the rail used", payment?.provider === "PAYSTACK", payment?.provider);
+  // Every attempt is recorded before the provider is called, so a rail that
+  // failed left a row explaining why. That row is the whole diagnosis.
+  const attempts = ((await api("GET", `/v1/payment-attempts?invoiceId=${invoiceId}&limit=10`)).data?.items ??
+    []) as any[];
+  const failures = attempts.filter((a) => a.status === "FAILED");
+
+  for (const failure of failures) {
+    console.log(`  \x1b[33m!\x1b[0m ${failure.provider} failed: ${failure.failureCode}`);
+    console.log(`      ${String(failure.failureReason ?? "").slice(0, 400)}`);
+  }
+
+  if (
+    !check("Paystack was the rail used", payment?.provider === "PAYSTACK", payment?.provider) &&
+    failures.some((f) => f.provider === "PAYSTACK")
+  ) {
+    console.error(
+      "\n  Paystack was tried first and failed — the reason is printed above.\n" +
+        "  The payment then fell through to another rail. Fix that error and re-run.\n"
+    );
+    process.exit(1);
+  }
   check("a checkout was opened", Boolean(payment?.checkoutUrl), payment);
   // Initialization must never report success — no money has moved yet.
   check("nothing is marked paid yet", payment?.status === "PENDING", payment?.status);

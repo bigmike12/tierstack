@@ -116,4 +116,54 @@ describe("payment routing", () => {
       /No configured payment provider/
     );
   });
+
+  describe("the mock rail is never a fallback for a real one", () => {
+    it("is excluded entirely once a real provider is configured", () => {
+      const decision = routePayment(
+        [make("MOCK", cardOnly, { priority: 10, isDefault: true }), make("PAYSTACK", cardOnly, { priority: 100 })],
+        { currency: "NGN" }
+      );
+
+      expect(decision.candidates.map((c) => c.kind)).toEqual(["PAYSTACK"]);
+      expect(decision.rejected.find((r) => r.kind === "MOCK")?.reason).toMatch(/never used/i);
+    });
+
+    it("is excluded even when it outranks the real rail on every signal", () => {
+      // Default, lowest priority number, and the last provider that succeeded —
+      // the mock rail wins on all three and must still not be chosen.
+      const decision = routePayment(
+        [make("MOCK", cardOnly, { priority: 0, isDefault: true }), make("PAYSTACK", cardOnly, { priority: 500 })],
+        { currency: "NGN", lastSuccessfulProvider: "MOCK" }
+      );
+
+      expect(decision.candidates.map((c) => c.kind)).toEqual(["PAYSTACK"]);
+    });
+
+    it("is excluded even when the real rail is unhealthy", () => {
+      // An outage must surface as a failed payment, never as a fake success.
+      const decision = routePayment(
+        [make("MOCK", cardOnly, { priority: 10 }), make("PAYSTACK", cardOnly, { priority: 100, healthy: false })],
+        { currency: "NGN" }
+      );
+
+      expect(decision.candidates.map((c) => c.kind)).toEqual(["PAYSTACK"]);
+    });
+
+    it("still routes to the mock rail when it is the only one", () => {
+      const decision = routePayment([make("MOCK", cardOnly, { priority: 10, isDefault: true })], {
+        currency: "NGN",
+      });
+      expect(decision.candidates.map((c) => c.kind)).toEqual(["MOCK"]);
+    });
+
+    it("ignores a disabled real rail when deciding", () => {
+      // A provider that is switched off is not a rail, so the mock one is still
+      // the only thing available.
+      const decision = routePayment(
+        [make("MOCK", cardOnly, { priority: 10 }), make("PAYSTACK", cardOnly, { priority: 100, enabled: false })],
+        { currency: "NGN" }
+      );
+      expect(decision.candidates.map((c) => c.kind)).toEqual(["MOCK"]);
+    });
+  });
 });
