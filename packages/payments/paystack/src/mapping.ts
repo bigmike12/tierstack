@@ -177,3 +177,24 @@ export function asRecord(value: unknown): Record<string, unknown> {
 }
 
 export const PAYSTACK_CURRENCIES: CurrencyCode[] = ["NGN", "GHS", "ZAR", "USD", "KES"];
+
+/**
+ * Paystack restricts a transaction reference to alphanumerics plus `-`, `.`
+ * and `=`. This platform's ids are `prefix_random`, and that underscore is
+ * rejected outright — `POST /transaction/initialize` fails before a customer
+ * ever sees a checkout page.
+ *
+ * The id alphabet is strictly alphanumeric and the prefix separator is the only
+ * underscore, so swapping it for a dash is a clean bijection: `pay_a1b2` becomes
+ * `pay-a1b2` on the way out and converts straight back on the way in. Nothing
+ * outside this adapter ever sees the Paystack form — `PaymentResult.reference`
+ * and `NormalizedPaymentEvent.reference` are always the platform id, because a
+ * reference the rest of the engine cannot look up is worse than no reference.
+ */
+export function toProviderReference(platformReference: string): string {
+  return platformReference.replace("_", "-");
+}
+
+export function fromProviderReference(providerReference: string): string {
+  return providerReference.replace("-", "_");
+}

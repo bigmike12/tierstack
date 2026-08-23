@@ -24,11 +24,13 @@ import {
   asRecord,
   asString,
   fromPaystackAmount,
+  fromProviderReference,
   parsePaidAt,
   toChannels,
   toEventType,
   toPaymentStatus,
   toPaystackAmount,
+  toProviderReference,
   toTokenizedMethod,
 } from "./mapping";
 
@@ -128,7 +130,7 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
         email: input.customer.email,
         amount: toPaystackAmount(input.amount),
         currency: input.amount.currency,
-        reference: input.reference,
+        reference: toProviderReference(input.reference),
         ...(input.callbackUrl ? { callback_url: input.callbackUrl } : {}),
         ...(toChannels(input.allowedMethods) ? { channels: toChannels(input.allowedMethods) } : {}),
         // Paystack echoes metadata back on verify and on the webhook, which is
@@ -148,8 +150,10 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
     }
 
     return {
-      reference: asString(data.reference) ?? input.reference,
-      providerReference: asString(data.reference) ?? input.reference,
+      // The platform id, never Paystack's dashed form — the engine looks the
+      // attempt up by this.
+      reference: input.reference,
+      providerReference: asString(data.reference) ?? toProviderReference(input.reference),
       checkoutUrl,
       // Initialization only opens a checkout; nothing has been paid yet, and
       // saying otherwise here would grant access before any money moved.
@@ -160,7 +164,10 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
 
   override async verifyPayment(reference: string): Promise<PaymentResult> {
     const data = unwrap(
-      await this.transport.request("GET", `/transaction/verify/${encodeURIComponent(reference)}`),
+      await this.transport.request(
+        "GET",
+        `/transaction/verify/${encodeURIComponent(toProviderReference(reference))}`
+      ),
       "transaction verification"
     );
     return this.toPaymentResult(reference, data);
@@ -182,7 +189,7 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
         email: input.customer.email,
         amount: toPaystackAmount(input.amount),
         currency: input.amount.currency,
-        reference: input.reference,
+        reference: toProviderReference(input.reference),
         authorization_code: input.paymentMethod.providerPaymentMethodRef,
         metadata: {
           ...(input.metadata ?? {}),
@@ -293,7 +300,10 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
     const data = asRecord(envelope.data);
     const rawEventType = String(envelope.event ?? "unknown");
 
-    const reference = asString(data.reference);
+    // Paystack echoes its own dashed form; convert back so the reference the
+    // engine receives is the payment attempt id it can actually look up.
+    const providerReference = asString(data.reference);
+    const reference = providerReference ? fromProviderReference(providerReference) : undefined;
     const currency = asString(data.currency);
     const amount =
       currency && data.amount !== undefined ? fromPaystackAmount(data.amount, currency) : undefined;
@@ -311,7 +321,7 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
       providerEventId,
       type: toEventType(envelope.event),
       rawEventType,
-      ...(reference ? { reference, providerReference: reference } : {}),
+      ...(reference ? { reference, providerReference: providerReference ?? reference } : {}),
       ...(amount ? { amount } : {}),
       ...(parsePaidAt(data.paid_at) ? { paidAt: parsePaidAt(data.paid_at) } : {}),
       ...(String(data.status ?? "") === "failed"
@@ -339,8 +349,8 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
     const method = toTokenizedMethod(data.authorization, asString(customer.customer_code) ?? null);
 
     return {
-      reference: asString(data.reference) ?? reference,
-      providerReference: asString(data.reference) ?? reference,
+      reference,
+      providerReference: asString(data.reference) ?? toProviderReference(reference),
       status,
       // Read back from Paystack, never taken from the request. The engine
       // compares this against the invoice before marking anything paid.

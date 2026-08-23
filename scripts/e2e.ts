@@ -742,6 +742,62 @@ async function main(): Promise<void> {
   const events = await prisma.webhookEvent.count({ where: { organizationId, status: "PROCESSED" } });
   check("exactly one webhook event was processed", events === 1, { events });
 
+  // Paystack cannot carry the underscore in a `pay_...` id and is sent a dashed
+  // reference instead. The intake resolves the organization from the raw body
+  // before any adapter exists, so it has to recognise that spelling — otherwise
+  // every real Paystack delivery is filed as "unmatched" and silently dropped.
+  const paystackSecret = "sk_test_e2e_reference_shape";
+  await call("POST", "/v1/payment-providers", {
+    headers: asUser(),
+    payload: {
+      provider: "PAYSTACK",
+      environment: "TEST",
+      credentials: { secretKey: paystackSecret },
+      isDefault: false,
+    },
+  });
+
+  const anyAttempt = await prisma.paymentAttempt.findFirst({ where: { organizationId } });
+  const dashedReference = anyAttempt!.id.replace("_", "-");
+  check("a payment attempt id contains the character Paystack rejects", anyAttempt!.id.includes("_"));
+
+  // An event type that normalizes to UNKNOWN, so the intake records it without
+  // calling out to Paystack — this asserts routing and signature only.
+  const paystackBody = JSON.stringify({
+    event: "subscription.not_renew",
+    data: { id: 987654, reference: dashedReference, currency: "NGN", amount: 100 },
+  });
+  const paystackSignature = createHmac("sha512", paystackSecret).update(paystackBody).digest("hex");
+
+  const paystackDelivery = await app.inject({
+    method: "POST",
+    url: "/webhooks/paystack",
+    headers: { "content-type": "application/json", "x-paystack-signature": paystackSignature },
+    payload: paystackBody,
+  });
+  check(
+    "a Paystack webhook with a dashed reference finds its organization",
+    paystackDelivery.statusCode === 200 && paystackDelivery.json().data?.received === true,
+    paystackDelivery.body.slice(0, 200)
+  );
+
+  const paystackEvent = await prisma.webhookEvent.findFirst({
+    where: { organizationId, provider: "PAYSTACK" },
+  });
+  check(
+    "it is recorded against the tenant with a verified signature",
+    paystackEvent?.organizationId === organizationId && paystackEvent?.signatureVerified === true,
+    { matched: paystackEvent?.organizationId, verified: paystackEvent?.signatureVerified }
+  );
+
+  const forgedPaystack = await app.inject({
+    method: "POST",
+    url: "/webhooks/paystack",
+    headers: { "content-type": "application/json", "x-paystack-signature": "deadbeef" },
+    payload: paystackBody,
+  });
+  check("a Paystack webhook with a bad signature is refused", forgedPaystack.statusCode === 403);
+
   // -- 14. Tenant isolation --------------------------------------------------
   section("14. Tenant isolation");
 

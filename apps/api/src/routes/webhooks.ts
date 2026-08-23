@@ -204,6 +204,12 @@ export function registerWebhookEventRoutes(app: FastifyInstance, prisma: PrismaC
 /**
  * The payment reference is this platform's own PaymentAttempt id, so the
  * owning organization is a single lookup away.
+ *
+ * This runs before any adapter is built — the organization is what decides which
+ * credentials to load — so it sees the reference exactly as the provider sent
+ * it. Paystack cannot carry the underscore in `pay_...` and is given a dashed
+ * form instead, so both spellings are tried rather than making this function
+ * know which provider it is reading.
  */
 async function resolveOrganization(prisma: PrismaClient, rawBody: Buffer): Promise<string | null> {
   const payload = safeJson(rawBody) as { data?: { reference?: unknown } ; reference?: unknown } | null;
@@ -215,8 +221,11 @@ async function resolveOrganization(prisma: PrismaClient, rawBody: Buffer): Promi
         : null;
   if (!reference) return null;
 
-  const attempt = await prisma.paymentAttempt.findUnique({
-    where: { id: reference },
+  const candidates = [reference];
+  if (reference.includes("-")) candidates.push(reference.replace("-", "_"));
+
+  const attempt = await prisma.paymentAttempt.findFirst({
+    where: { id: { in: candidates } },
     select: { organizationId: true },
   });
   return attempt?.organizationId ?? null;
