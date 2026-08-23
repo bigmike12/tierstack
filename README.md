@@ -84,7 +84,7 @@ undecryptable.
 `npm run dev` starts all three. To run them separately: `npm run dev:api`,
 `npm run dev:dashboard`, `npm run dev:worker`.
 
-The seed prints dashboard credentials — sign in at <http://localhost:3000>.
+The seed prints dashboard credentials — sign in at <http://localhost:8181>.
 
 `npm run db:seed` also prints a `sk_test_...` key once. Then:
 
