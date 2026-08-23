@@ -2,7 +2,7 @@
   "name": "tierbase",
   "private": true,
   "version": "0.1.0",
-  "description": "Tierbase — provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
+  "description": "Tierbase \u2014 provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
   "workspaces": [
     "packages/*",
     "packages/payments/*",
@@ -16,18 +16,21 @@
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "turbo run dev --parallel",
+    "dev": "node scripts/infra.mjs && turbo run dev --parallel",
     "dev:api": "turbo run dev --filter=@tierbase/api",
     "dev:dashboard": "turbo run dev --filter=@tierbase/dashboard",
     "dev:worker": "turbo run dev --filter=@tierbase/billing-worker",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
-    "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
-    "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
-    "db:reset": "prisma migrate reset --force --schema prisma/schema.prisma",
-    "db:seed": "tsx prisma/seed.ts",
-    "demo:data": "tsx scripts/demo-data.ts",
-    "e2e": "tsx scripts/e2e.ts",
-    "dev:usage-worker": "turbo run dev --filter=@tierbase/usage-worker"
+    "db:migrate": "node scripts/infra.mjs && prisma migrate dev --schema prisma/schema.prisma",
+    "db:deploy": "node scripts/infra.mjs && prisma migrate deploy --schema prisma/schema.prisma",
+    "db:reset": "node scripts/infra.mjs && prisma migrate reset --force --schema prisma/schema.prisma",
+    "db:seed": "node scripts/infra.mjs && tsx prisma/seed.ts",
+    "demo:data": "node scripts/infra.mjs && tsx scripts/demo-data.ts",
+    "e2e": "node scripts/infra.mjs && tsx scripts/e2e.ts",
+    "dev:usage-worker": "turbo run dev --filter=@tierbase/usage-worker",
+    "up": "node scripts/infra.mjs",
+    "down": "docker compose down",
+    "fresh": "node scripts/infra.mjs && yarn db:reset && yarn demo:data"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -65,11 +65,23 @@ Nothing pretends to work.
 Requires Node 20+, Docker (or a local PostgreSQL 16 and Redis 7).
 
 ```bash
-docker compose up -d     # PostgreSQL + Redis
 npm install              # also writes .env with generated secrets
-npm run db:reset         # migrate + seed
-npm run demo:data        # optional: subscribers across every billing state
+npm run fresh            # start Postgres and Redis, migrate, seed, load demo data
 npm run dev              # API :4000 · dashboard :3000 · worker
+```
+
+Every command that needs a database starts one first. `npm run dev`, `db:reset`,
+`demo:data` and `e2e` all check the ports in your `.env`, run `docker compose up
+-d` if nothing is listening, and wait until PostgreSQL is actually accepting
+connections rather than merely "started" — so `P1001: Can't reach database
+server` should never be the first thing you see. If it cannot start them it says
+which of the three reasons applies: no Docker, a stopped Docker daemon, or a
+container that failed to come up.
+
+After the first run, every subsequent day is just:
+
+```bash
+npm run dev
 ```
 
 Use `yarn`, `pnpm` or `bun` if you prefer — every script is package-manager
@@ -416,6 +428,9 @@ tierbase/
 | `npm run setup` | Recreate `.env` and re-detect the package manager |
 | `npm run db:seed` | Seed an organization, catalogue, mock provider, API key |
 | `npm run demo:data` | Populate subscribers across every billing state |
+| `npm run up` | Start PostgreSQL and Redis, and wait until they answer |
+| `npm run down` | Stop them |
+| `npm run fresh` | `up`, then reset the database and reload demo data |
 | `npm run db:reset` | Drop, re-migrate, re-seed |
 | `npm test` | Unit tests |
 | `npm run e2e` | Full lifecycle against real infrastructure |
