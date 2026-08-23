@@ -25,3 +25,4 @@ dump.rdb
 
 # Local TypeScript build info.
 *.tsbuildinfo
+.DS_Store

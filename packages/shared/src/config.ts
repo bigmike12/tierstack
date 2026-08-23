@@ -32,7 +32,7 @@ export interface BrandingConfig {
 export function loadBranding(env: NodeJS.ProcessEnv = process.env): BrandingConfig {
   return {
     appName: env.APP_NAME || DEFAULT_APP_NAME,
-    appUrl: env.APP_URL || "http://localhost:3000",
+    appUrl: env.APP_URL || "http://localhost:8181",
     apiUrl: env.API_URL || "http://localhost:4000",
     portalUrl: env.PORTAL_URL || "http://localhost:3001",
     emailSender: env.EMAIL_SENDER || `billing@${DEFAULT_DOMAIN}`,

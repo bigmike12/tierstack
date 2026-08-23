@@ -8,7 +8,7 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
 
-  APP_URL: z.string().url().default("http://localhost:3000"),
+  APP_URL: z.string().url().default("http://localhost:8181"),
   API_URL: z.string().url().default("http://localhost:4000"),
   PORTAL_URL: z.string().url().default("http://localhost:3001"),
 

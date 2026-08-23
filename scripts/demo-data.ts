@@ -256,7 +256,7 @@ async function main(): Promise<void> {
 
   console.log("\nSubscription states now in the database:");
   for (const row of counts) console.log(`  ${row.status.padEnd(14)} ${row._count._all}`);
-  console.log("\nOpen the dashboard at http://localhost:3000\n");
+  console.log("\nOpen the dashboard at http://localhost:8181\n");
 
   await app.close();
   await prisma.$disconnect();
