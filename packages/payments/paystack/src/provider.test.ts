@@ -13,7 +13,7 @@ import { PaystackPaymentProvider } from "./provider";
  * and a test-mode transaction, and has not been run.
  */
 
-const SECRET = process.env.TEST_SECRET_KEY;
+const SECRET = process.env.TEST_SECRET_KEY || "";
 
 class StubTransport implements PaystackTransport {
   readonly calls: { method: string; path: string; body?: unknown }[] = [];
