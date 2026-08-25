@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { CURRENCIES } from "@tierbase/shared";
 import { archivePrice, setPlanActive } from "@/actions/catalogue";
 import { Badge } from "@/components/ui/badge";
@@ -152,14 +152,22 @@ export default async function PlanDetailPage({
                         {price.trialDays ? `${price.trialDays} days` : "—"}
                       </TD>
                       <TD className="text-right">
-                        <form action={archivePrice}>
-                          <input type="hidden" name="priceId" value={price.id} />
-                          <input type="hidden" name="planId" value={plan.id} />
-                          <input type="hidden" name="active" value={price.active ? "false" : "true"} />
-                          <Button type="submit" variant="ghost" size="sm">
-                            {price.active ? "Archive" : "Restore"}
-                          </Button>
-                        </form>
+                        <div className="flex justify-end gap-1">
+                          <Link href={`/plans/${plan.id}/prices/${price.id}/edit`}>
+                            <Button type="button" variant="ghost" size="sm">
+                              <Pencil aria-hidden />
+                              Edit
+                            </Button>
+                          </Link>
+                          <form action={archivePrice}>
+                            <input type="hidden" name="priceId" value={price.id} />
+                            <input type="hidden" name="planId" value={plan.id} />
+                            <input type="hidden" name="active" value={price.active ? "false" : "true"} />
+                            <Button type="submit" variant="ghost" size="sm">
+                              {price.active ? "Archive" : "Restore"}
+                            </Button>
+                          </form>
+                        </div>
                       </TD>
                     </TR>
                   );
@@ -185,7 +193,7 @@ export default async function PlanDetailPage({
               currencies={CURRENCY_CODES}
               meters={(meters ?? [])
                 .filter((meter) => meter.active)
-                .map((meter) => ({ code: meter.code, name: meter.name, unitLabel: meter.unitLabel }))}
+                .map((meter) => ({ id: meter.id, code: meter.code, name: meter.name, unitLabel: meter.unitLabel }))}
             />
           </CardContent>
         </Card>

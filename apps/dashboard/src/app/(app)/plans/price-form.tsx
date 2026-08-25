@@ -2,9 +2,10 @@
 
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { createPrice, type CatalogueState } from "@/actions/catalogue";
+import { createPrice, updatePrice, type CatalogueState } from "@/actions/catalogue";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
+import type { Price } from "@/lib/types";
 import { Alert } from "./plan-form";
 
 const MODELS = [
@@ -34,13 +35,38 @@ const INTERVALS = [
   "CUSTOM_DAYS",
 ];
 
-function Submit() {
+function Submit({ editing }: { editing: boolean }) {
   const { pending } = useFormStatus();
   return (
     <Button type="submit" disabled={pending}>
-      {pending ? "Adding…" : "Add price"}
+      {pending ? (editing ? "Saving…" : "Adding…") : editing ? "Save price" : "Add price"}
     </Button>
   );
+}
+
+function intervalFor(price: Price): string {
+  const key = `${price.intervalUnit}:${price.intervalCount}`;
+  return (
+    {
+      "DAY:1": "DAILY",
+      "WEEK:1": "WEEKLY",
+      "WEEK:2": "BI_WEEKLY",
+      "MONTH:1": "MONTHLY",
+      "MONTH:2": "BI_MONTHLY",
+      "MONTH:3": "QUARTERLY",
+      "MONTH:6": "SEMI_ANNUALLY",
+      "YEAR:1": "ANNUALLY",
+    }[key] ?? "CUSTOM_DAYS"
+  );
+}
+
+function majorAmount(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined) return "";
+  // All dashboard-supported currencies currently use two minor digits. Keep
+  // this browser component free of the shared package barrel, which also
+  // exports Node-only ID helpers.
+  const decimals = 2;
+  return String(amount / 10 ** decimals);
 }
 
 /**
@@ -56,11 +82,41 @@ export function CreatePriceForm({
 }: {
   planId: string;
   currencies: string[];
-  meters: { code: string; name: string; unitLabel: string | null }[];
+  meters: { id?: string; code: string; name: string; unitLabel: string | null }[];
 }) {
-  const [state, action] = useActionState<CatalogueState, FormData>(createPrice, {});
-  const [model, setModel] = useState(state.values?.model ?? "FLAT_RECURRING");
-  const [interval, setInterval] = useState(state.values?.interval ?? "MONTHLY");
+  return <PriceForm planId={planId} currencies={currencies} meters={meters} />;
+}
+
+export function EditPriceForm({
+  planId,
+  price,
+  currencies,
+  meters,
+}: {
+  planId: string;
+  price: Price;
+  currencies: string[];
+  meters: { id?: string; code: string; name: string; unitLabel: string | null }[];
+}) {
+  return <PriceForm planId={planId} price={price} currencies={currencies} meters={meters} />;
+}
+
+function PriceForm({
+  planId,
+  price,
+  currencies,
+  meters,
+}: {
+  planId: string;
+  price?: Price;
+  currencies: string[];
+  meters: { id?: string; code: string; name: string; unitLabel: string | null }[];
+}) {
+  const editing = Boolean(price);
+  const [state, action] = useActionState<CatalogueState, FormData>(editing ? updatePrice : createPrice, {});
+  const initialInterval = price ? intervalFor(price) : "MONTHLY";
+  const [model, setModel] = useState(state.values?.model ?? price?.model ?? "FLAT_RECURRING");
+  const [interval, setInterval] = useState(state.values?.interval ?? initialInterval);
 
   const metered = model === "USAGE_METERED" || model === "HYBRID";
   const hasRecurringAmount = model !== "USAGE_METERED";
@@ -69,14 +125,21 @@ export function CreatePriceForm({
   return (
     <form action={action} className="space-y-5">
       <input type="hidden" name="planId" value={planId} />
+      {price ? <input type="hidden" name="priceId" value={price.id} /> : null}
       <Alert state={state} />
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <Field label="Price code" hint="Unique within the plan.">
-          <Input name="code" required placeholder="growth-monthly-ngn" defaultValue={state.values?.code} />
-        </Field>
+        {price ? (
+          <Field label="Price code" hint="Immutable — integrations can reference it.">
+            <Input value={price.code} disabled />
+          </Field>
+        ) : (
+          <Field label="Price code" hint="Unique within the plan.">
+            <Input name="code" required placeholder="growth-monthly-ngn" defaultValue={state.values?.code} />
+          </Field>
+        )}
         <Field label="Nickname" hint="Optional, for your own reference.">
-          <Input name="nickname" placeholder="Monthly, Naira" defaultValue={state.values?.nickname} />
+          <Input name="nickname" placeholder="Monthly, Naira" defaultValue={state.values?.nickname ?? price?.nickname ?? ""} />
         </Field>
       </div>
 
@@ -92,7 +155,7 @@ export function CreatePriceForm({
 
       <div className="grid gap-5 sm:grid-cols-2">
         <Field label="Currency">
-          <Select name="currency" defaultValue={state.values?.currency ?? currencies[0]}>
+          <Select name="currency" defaultValue={state.values?.currency ?? price?.currency ?? currencies[0]}>
             {currencies.map((code) => (
               <option key={code} value={code}>
                 {code}
@@ -112,7 +175,7 @@ export function CreatePriceForm({
               inputMode="decimal"
               pattern="[0-9]+([.][0-9]+)?"
               placeholder="10000"
-              defaultValue={state.values?.amount}
+              defaultValue={state.values?.amount ?? majorAmount(price?.unitAmount)}
             />
           </Field>
         ) : (
@@ -142,13 +205,13 @@ export function CreatePriceForm({
               min={1}
               max={3650}
               placeholder="45"
-              defaultValue={state.values?.intervalDays}
+              defaultValue={state.values?.intervalDays ?? (price?.intervalUnit === "DAY" && price.intervalCount > 1 ? String(price.intervalCount) : "")}
             />
           </Field>
         ) : null}
 
         <Field label="Trial days" hint="Blank for no trial.">
-          <Input name="trialDays" type="number" min={0} max={365} defaultValue={state.values?.trialDays} />
+          <Input name="trialDays" type="number" min={0} max={365} defaultValue={state.values?.trialDays ?? (price?.trialDays?.toString() ?? "")} />
         </Field>
       </div>
 
@@ -168,7 +231,7 @@ export function CreatePriceForm({
             <>
               <div className="grid gap-5 sm:grid-cols-2">
                 <Field label="Meter">
-                  <Select name="usageMeterCode" defaultValue={state.values?.usageMeterCode ?? meters[0]?.code}>
+                  <Select name="usageMeterCode" defaultValue={state.values?.usageMeterCode ?? meters.find((meter) => meter.id === price?.usageMeterId)?.code ?? meters[0]?.code}>
                     {meters.map((meter) => (
                       <option key={meter.code} value={meter.code}>
                         {meter.name} ({meter.code})
@@ -182,7 +245,7 @@ export function CreatePriceForm({
                     inputMode="decimal"
                     pattern="[0-9]+([.][0-9]+)?"
                     placeholder="50"
-                    defaultValue={state.values?.usageAmount}
+                    defaultValue={state.values?.usageAmount ?? majorAmount(price?.usageUnitAmount)}
                   />
                 </Field>
               </div>
@@ -197,7 +260,7 @@ export function CreatePriceForm({
                     type="number"
                     min={1}
                     placeholder="1000"
-                    defaultValue={state.values?.usageUnitSize ?? "1"}
+                    defaultValue={state.values?.usageUnitSize ?? (price?.usageUnitSize?.toString() ?? "1")}
                   />
                 </Field>
                 <Field label="Included units" hint="The allowance before overage starts. Blank means none.">
@@ -206,7 +269,7 @@ export function CreatePriceForm({
                     type="number"
                     min={0}
                     placeholder="100000"
-                    defaultValue={state.values?.includedUnits}
+                    defaultValue={state.values?.includedUnits ?? (price?.includedUnits?.toString() ?? "")}
                   />
                 </Field>
               </div>
@@ -216,10 +279,11 @@ export function CreatePriceForm({
       ) : null}
 
       <div className="flex items-center gap-3">
-        <Submit />
+        <Submit editing={editing} />
         <p className="text-xs text-muted-foreground">
-          Amounts cannot be edited afterwards — an existing subscriber is bound to the price they signed up
-          on. Add a new price and change them onto it instead.
+          {editing
+            ? "Changes apply to future billing. Use a new price and a plan change when existing subscribers need grandfathered terms."
+            : "You can edit the price later. Use a new price and a plan change when existing subscribers need grandfathered terms."}
         </p>
       </div>
     </form>

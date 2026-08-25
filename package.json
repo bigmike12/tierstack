@@ -2,7 +2,7 @@
   "name": "tierbase",
   "private": true,
   "version": "0.1.0",
-  "description": "Tierbase \u2014 provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
+  "description": "Tierbase — provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
   "workspaces": [
     "packages/*",
     "packages/payments/*",
@@ -36,7 +36,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^26.2.0",
     "prisma": "^6.2.1",
     "tsx": "^4.19.2",
     "turbo": "^2.3.3",

@@ -51,6 +51,38 @@ const priceSchema = z
     { message: "unitAmount is required for every model except USAGE_METERED.", path: ["unitAmount"] }
   );
 
+// Price codes are deliberately not editable: they are public identifiers used
+// by integrations. Everything that describes how the price is billed can be
+// changed through this schema instead.
+const priceUpdateSchema = z.object({
+  nickname: z.string().max(120).nullable().optional(),
+  model: z.enum(["FLAT_RECURRING", "PER_SEAT", "USAGE_METERED", "HYBRID"]).optional(),
+  currency: z.string().length(3).optional(),
+  unitAmount: z.number().int().min(0).nullable().optional(),
+  interval: z
+    .enum([
+      "DAILY",
+      "WEEKLY",
+      "BI_WEEKLY",
+      "MONTHLY",
+      "BI_MONTHLY",
+      "QUARTERLY",
+      "SEMI_ANNUALLY",
+      "ANNUALLY",
+      "CUSTOM_DAYS",
+    ])
+    .optional(),
+  intervalDays: z.number().int().min(1).max(3650).optional(),
+  // Null explicitly detaches a meter when changing away from metered pricing.
+  usageMeterCode: z.string().min(1).nullable().optional(),
+  usageUnitAmount: z.number().int().min(0).nullable().optional(),
+  usageUnitSize: z.number().int().min(1).nullable().optional(),
+  includedUnits: z.number().int().min(0).nullable().optional(),
+  trialDays: z.number().int().min(0).max(365).nullable().optional(),
+  active: z.boolean().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClient): void {
   // -- Plans -----------------------------------------------------------------
 
@@ -237,19 +269,71 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
   app.patch("/v1/prices/:priceId", async (request) => {
     const organizationId = requireOrganization(request);
     requireRole(request, "ADMIN");
+    const actor = requireActor(request);
     const { priceId } = request.params as { priceId: string };
-    const body = z.object({ active: z.boolean().optional(), nickname: z.string().max(120).optional() }).parse(
-      request.body
-    );
+    const body = priceUpdateSchema.parse(request.body);
 
     const price = await prisma.price.findFirst({
       where: { organizationId, OR: [{ id: priceId }, { code: priceId }] },
     });
     if (!price) throw BillingError.notFound("PRICE_NOT_FOUND", "Price");
 
-    // Amounts are immutable: changing what an existing subscriber pays must be
-    // an explicit plan change, not an edit to a price row they are bound to.
-    const updated = await prisma.price.update({ where: { id: price.id }, data: body });
+    const model = body.model ?? price.model;
+    const unitAmount = body.unitAmount === undefined ? price.unitAmount : body.unitAmount;
+    const usageUnitAmount =
+      body.usageUnitAmount === undefined ? price.usageUnitAmount : body.usageUnitAmount;
+    const usageMeterCode = body.usageMeterCode;
+
+    if (model !== "USAGE_METERED" && unitAmount === null) {
+      throw new BillingError("INVALID_REQUEST", "This pricing model needs a recurring amount.");
+    }
+
+    let usageMeterId: string | null | undefined;
+    if (usageMeterCode !== undefined) {
+      if (usageMeterCode === null) {
+        usageMeterId = null;
+      } else {
+        const meter = await prisma.usageMeter.findUnique({
+          where: { organizationId_code: { organizationId, code: usageMeterCode } },
+        });
+        if (!meter) {
+          throw new BillingError("INVALID_REQUEST", `No usage meter with code "${usageMeterCode}".`);
+        }
+        usageMeterId = meter.id;
+      }
+    }
+    const effectiveUsageMeterId = usageMeterId === undefined ? price.usageMeterId : usageMeterId;
+
+    if ((model === "USAGE_METERED" || model === "HYBRID") && !effectiveUsageMeterId) {
+      throw new BillingError("INVALID_REQUEST", "A metered price must name the meter it bills against.");
+    }
+    if ((model === "USAGE_METERED" || model === "HYBRID") && usageUnitAmount === null) {
+      throw new BillingError("INVALID_REQUEST", "A metered price needs a rate per block.");
+    }
+
+    const interval = body.interval ? intervalFromRequest(body.interval, body.intervalDays) : undefined;
+    const { interval: _interval, intervalDays: _intervalDays, usageMeterCode: _usageMeterCode, ...data } = body;
+    const updated = await prisma.price.update({
+      where: { id: price.id },
+      data: {
+        ...data,
+        ...(body.currency ? { currency: assertCurrency(body.currency) } : {}),
+        ...(interval ?? {}),
+        ...(usageMeterId === undefined ? {} : { usageMeterId }),
+      } as never,
+    });
+
+    await notifyEntitlementChange(organizationId, null);
+    await recordAudit(prisma, {
+      organizationId,
+      actorType: actor.kind,
+      userId: actor.kind === "USER" ? actor.userId : null,
+      action: "price.updated",
+      resource: "price",
+      resourceId: price.id,
+      metadata: { code: price.code, changed: Object.keys(body) },
+      ipAddress: request.ip,
+    });
     return success(updated, request.requestId);
   });
 }

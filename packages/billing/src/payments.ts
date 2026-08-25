@@ -225,6 +225,16 @@ export async function applyPaymentResult(
     const invoice = attempt.invoice;
     const result = params.result;
 
+    // Webhook redeliveries or callback retries can report the same successful
+    // settlement more than once. Once an attempt is terminally succeeded, the
+    // invoice amount must not be incremented again.
+    if (attempt.status === "SUCCEEDED") {
+      return {
+        invoiceStatus: invoice.status,
+        subscriptionStatus: invoice.subscription?.status as SubscriptionStatus | undefined,
+      };
+    }
+
     if (result.status === "SUCCEEDED") {
       // Never trust the amount implied by a redirect. Compare what the provider
       // says it actually collected against what the invoice asked for.

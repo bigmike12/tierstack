@@ -3,6 +3,7 @@ import Link from "next/link";
 import { logoutAction } from "@/actions/session";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { Sidebar } from "@/components/sidebar";
+import { ScrollReset } from "@/components/scroll-reset";
 import { Wordmark } from "@/components/wordmark";
 import { Button } from "@/components/ui/button";
 import { apiFetchOrNull } from "@/lib/api";
@@ -53,7 +54,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-6 lg:px-8 lg:py-8">{children}</main>
+        <main
+          id="app-scroll-container"
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-5 py-6 lg:px-8 lg:py-8"
+        >
+          <ScrollReset containerId="app-scroll-container" />
+          {children}
+        </main>
       </div>
     </div>
   );

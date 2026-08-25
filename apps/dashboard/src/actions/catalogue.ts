@@ -191,6 +191,72 @@ export async function createPrice(_prev: CatalogueState, formData: FormData): Pr
   return { message: `Price ${values.code} added.` };
 }
 
+/** Updates the billable details of an existing price. Amounts enter the form in
+ * major units and are converted here, exactly as they are when a price is made. */
+export async function updatePrice(_prev: CatalogueState, formData: FormData): Promise<CatalogueState> {
+  const priceId = text(formData, "priceId");
+  const planId = text(formData, "planId");
+  const model = text(formData, "model") || "FLAT_RECURRING";
+  const currency = text(formData, "currency") || "NGN";
+  const values: Record<string, string> = {
+    nickname: text(formData, "nickname"),
+    model,
+    currency,
+    amount: text(formData, "amount"),
+    interval: text(formData, "interval") || "MONTHLY",
+    intervalDays: text(formData, "intervalDays"),
+    trialDays: text(formData, "trialDays"),
+    usageMeterCode: text(formData, "usageMeterCode"),
+    usageAmount: text(formData, "usageAmount"),
+    usageUnitSize: text(formData, "usageUnitSize"),
+    includedUnits: text(formData, "includedUnits"),
+  };
+  const metered = model === "USAGE_METERED" || model === "HYBRID";
+  const body: Record<string, unknown> = {
+    nickname: values.nickname || null,
+    model,
+    currency,
+    interval: values.interval,
+    intervalDays: values.interval === "CUSTOM_DAYS" ? Number.parseInt(values.intervalDays, 10) : undefined,
+    trialDays: values.trialDays ? Number.parseInt(values.trialDays, 10) : null,
+  };
+
+  try {
+    if (model !== "USAGE_METERED") {
+      if (!values.amount) return { error: "This pricing model needs a recurring amount.", values };
+      body.unitAmount = parseMoney(values.amount, currency).amount;
+    } else {
+      body.unitAmount = null;
+    }
+
+    if (metered) {
+      if (!values.usageMeterCode) return { error: "A metered price must name the meter it bills against.", values };
+      if (!values.usageAmount) return { error: "A metered price needs a rate per block.", values };
+      body.usageMeterCode = values.usageMeterCode;
+      body.usageUnitAmount = parseMoney(values.usageAmount, currency).amount;
+      body.usageUnitSize = values.usageUnitSize ? Number.parseInt(values.usageUnitSize, 10) : 1;
+      body.includedUnits = values.includedUnits ? Number.parseInt(values.includedUnits, 10) : null;
+    } else {
+      body.usageMeterCode = null;
+      body.usageUnitAmount = null;
+      body.usageUnitSize = null;
+      body.includedUnits = null;
+    }
+  } catch (error) {
+    return failure(error, values);
+  }
+
+  try {
+    await apiFetch(`/v1/prices/${priceId}`, { method: "PATCH", body: JSON.stringify(body) });
+  } catch (error) {
+    return failure(error, values);
+  }
+
+  revalidatePath("/plans");
+  revalidatePath(`/plans/${planId}`);
+  return { message: "Price saved. New billing uses these details." };
+}
+
 /**
  * Prices are archived, never deleted: a subscriber is bound to the price row
  * they signed up on, and removing it would orphan their subscription and every
