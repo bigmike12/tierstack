@@ -9,12 +9,12 @@
  * Everything goes through the public API, so this exercises the same paths a
  * real integration would.
  */
-import { loadRootEnv } from "@tierbase/shared";
+import { loadRootEnv } from "@tierstack/shared";
 
 // Load the monorepo .env before anything reads process.env.
 loadRootEnv();
 
-import { createPrismaClient } from "@tierbase/database";
+import { createPrismaClient } from "@tierstack/database";
 import { buildServer } from "../apps/api/src/server";
 
 interface Json {
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
   // The seed prints its key once and does not keep it, so mint a fresh one for
   // this script rather than asking the operator to paste anything.
   const { generateApiKey } = await import("../apps/api/src/lib/api-keys");
-  const { newId } = await import("@tierbase/shared");
+  const { newId } = await import("@tierstack/shared");
   const generated = generateApiKey("SECRET", "TEST");
   await prisma.apiKey.create({
     data: {

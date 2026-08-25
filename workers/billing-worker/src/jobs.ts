@@ -4,9 +4,9 @@ import {
   expireIncompleteSubscriptions,
   renewSubscription,
   type ProviderFactoryDeps,
-} from "@tierbase/billing";
-import type { PrismaClient } from "@tierbase/database";
-import { BillingError } from "@tierbase/shared";
+} from "@tierstack/billing";
+import type { PrismaClient } from "@tierstack/database";
+import { BillingError } from "@tierstack/shared";
 
 export interface JobContext {
   prisma: PrismaClient;

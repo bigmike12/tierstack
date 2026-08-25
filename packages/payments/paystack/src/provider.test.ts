@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { BillingError, money, newId } from "@tierbase/shared";
+import { BillingError, money, newId } from "@tierstack/shared";
 import type { PaystackEnvelope, PaystackTransport } from "./client";
 import { fromProviderReference, toProviderReference } from "./mapping";
 import { PaystackPaymentProvider } from "./provider";

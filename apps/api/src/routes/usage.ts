@@ -1,8 +1,8 @@
-import { lookupCustomer } from "@tierbase/billing";
-import type { PrismaClient } from "@tierbase/database";
-import { EntitlementCache } from "@tierbase/entitlements";
-import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierbase/shared";
-import { createMeter, listCustomerUsage, trackUsage } from "@tierbase/usage";
+import { lookupCustomer } from "@tierstack/billing";
+import type { PrismaClient } from "@tierstack/database";
+import { EntitlementCache } from "@tierstack/entitlements";
+import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierstack/shared";
+import { createMeter, listCustomerUsage, trackUsage } from "@tierstack/usage";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireOrganization, requireSecretKeyOrUser } from "../context";

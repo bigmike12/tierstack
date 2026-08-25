@@ -1,4 +1,4 @@
-import type { CurrencyCode, Money } from "@tierbase/shared";
+import type { CurrencyCode, Money } from "@tierstack/shared";
 
 export type ProviderKind = "PAYSTACK" | "MONNIFY" | "FLUTTERWAVE" | "MOCK";
 

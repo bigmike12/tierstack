@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Pencil } from "lucide-react";
-import { CURRENCIES } from "@tierbase/shared";
+import { CURRENCIES } from "@tierstack/shared";
 import { archivePrice, setPlanActive } from "@/actions/catalogue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

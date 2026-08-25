@@ -5,14 +5,14 @@
  * stable slug or code.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { loadRootEnv } from "@tierbase/shared";
+import { loadRootEnv } from "@tierstack/shared";
 
 // Load the monorepo .env before anything reads process.env.
 loadRootEnv();
 
-import { createPrismaClient } from "@tierbase/database";
-import { encryptCredentials } from "@tierbase/payments-core";
-import { newId } from "@tierbase/shared";
+import { createPrismaClient } from "@tierstack/database";
+import { encryptCredentials } from "@tierstack/payments-core";
+import { newId } from "@tierstack/shared";
 import { scrypt as scryptCallback } from "node:crypto";
 import { promisify } from "node:util";
 

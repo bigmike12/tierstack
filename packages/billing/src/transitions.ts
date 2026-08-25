@@ -1,4 +1,4 @@
-import type { TransactionClient } from "@tierbase/database";
+import type { TransactionClient } from "@tierstack/database";
 import { notifyEntitlementChange } from "./invalidation";
 import { transition, type SubscriptionStatus } from "./state-machine";
 

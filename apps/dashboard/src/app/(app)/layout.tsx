@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { apiFetchOrNull } from "@/lib/api";
 import type { Session } from "@/lib/types";
 
-const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierbase";
+const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierstack";
 const billingEnv = (process.env.BILLING_ENV ?? "test").toUpperCase();
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {

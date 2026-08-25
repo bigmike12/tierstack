@@ -1,4 +1,4 @@
-import { BillingError, type CurrencyCode } from "@tierbase/shared";
+import { BillingError, type CurrencyCode } from "@tierstack/shared";
 import type { PaymentProvider } from "./provider";
 import type { ProviderKind, ProviderPaymentMethodType } from "./types";
 

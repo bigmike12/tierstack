@@ -1,4 +1,4 @@
-import { newRequestId } from "@tierbase/shared";
+import { newRequestId } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 
 /**

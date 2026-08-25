@@ -1,28 +1,28 @@
-# Local infrastructure for Tierbase.
+# Local infrastructure for Tierstack.
 # The application itself runs on the host via `npm run dev`; this file provides
 # only the stateful services it needs.
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: tierbase_postgres
+    container_name: tierstack_postgres
     environment:
-      POSTGRES_USER: tierbase
-      POSTGRES_PASSWORD: tierbase
-      POSTGRES_DB: tierbase
+      POSTGRES_USER: tierstack
+      POSTGRES_PASSWORD: tierstack
+      POSTGRES_DB: tierstack
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tierbase -d tierbase"]
+      test: ["CMD-SHELL", "pg_isready -U tierstack -d tierstack"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:7-alpine
-    container_name: tierbase_redis
+    container_name: tierstack_redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"

@@ -1,7 +1,7 @@
-import { instantiateProvider, applyPaymentResult } from "@tierbase/billing";
-import type { PrismaClient } from "@tierbase/database";
-import { MockPaymentProvider, RedisMockStore } from "@tierbase/payments-mock";
-import { BillingError, formatMoney, money, assertCurrency, success } from "@tierbase/shared";
+import { instantiateProvider, applyPaymentResult } from "@tierstack/billing";
+import type { PrismaClient } from "@tierstack/database";
+import { MockPaymentProvider, RedisMockStore } from "@tierstack/payments-mock";
+import { BillingError, formatMoney, money, assertCurrency, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "../env";

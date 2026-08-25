@@ -5,13 +5,13 @@ import {
   money,
   type CurrencyCode,
   type Money,
-} from "@tierbase/shared";
+} from "@tierstack/shared";
 import type {
   NormalizedEventType,
   PaymentStatus,
   ProviderPaymentMethodType,
   TokenizedPaymentMethod,
-} from "@tierbase/payments-core";
+} from "@tierstack/payments-core";
 
 /**
  * Paystack quotes amounts in the currency's subunit — kobo for NGN, pesewas for

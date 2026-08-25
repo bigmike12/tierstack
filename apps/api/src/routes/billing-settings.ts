@@ -1,6 +1,6 @@
-import type { PrismaClient } from "@tierbase/database";
-import { assertCurrency, success } from "@tierbase/shared";
-import { loadBillingSettings, notifyEntitlementChange } from "@tierbase/billing";
+import type { PrismaClient } from "@tierstack/database";
+import { assertCurrency, success } from "@tierstack/shared";
+import { loadBillingSettings, notifyEntitlementChange } from "@tierstack/billing";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireActor, requireOrganization, requireRole } from "../context";

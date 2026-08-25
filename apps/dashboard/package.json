@@ -1,5 +1,5 @@
 {
-  "name": "@tierbase/dashboard",
+  "name": "@tierstack/dashboard",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tierbase/shared": "0.1.0",
+    "@tierstack/shared": "0.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.469.0",

@@ -1,4 +1,4 @@
-import { BillingError } from "@tierbase/shared";
+import { BillingError } from "@tierstack/shared";
 
 export type UsageAggregation = "SUM" | "MAX" | "LAST" | "UNIQUE_COUNT";
 

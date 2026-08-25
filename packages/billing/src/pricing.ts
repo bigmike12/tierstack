@@ -8,7 +8,7 @@ import {
   type BillingInterval,
   type CurrencyCode,
   type Money,
-} from "@tierbase/shared";
+} from "@tierstack/shared";
 
 export type PricingModel = "FLAT_RECURRING" | "PER_SEAT" | "USAGE_METERED" | "HYBRID";
 export type LineItemType =

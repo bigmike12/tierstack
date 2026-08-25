@@ -1,5 +1,5 @@
 {
-  "name": "@tierbase/usage-worker",
+  "name": "@tierstack/usage-worker",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
@@ -9,10 +9,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tierbase/database": "0.1.0",
-    "@tierbase/entitlements": "0.1.0",
-    "@tierbase/shared": "0.1.0",
-    "@tierbase/usage": "0.1.0",
+    "@tierstack/database": "0.1.0",
+    "@tierstack/entitlements": "0.1.0",
+    "@tierstack/shared": "0.1.0",
+    "@tierstack/usage": "0.1.0",
     "bullmq": "^5.34.6",
     "ioredis": "^5.4.2"
   }

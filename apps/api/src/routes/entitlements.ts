@@ -1,12 +1,12 @@
-import { lookupCustomer } from "@tierbase/billing";
-import type { PrismaClient } from "@tierbase/database";
+import { lookupCustomer } from "@tierstack/billing";
+import type { PrismaClient } from "@tierstack/database";
 import {
   EntitlementCache,
   checkEntitlement,
   listCustomerEntitlements,
   upsertEntitlement,
-} from "@tierbase/entitlements";
-import { BillingError, success } from "@tierbase/shared";
+} from "@tierstack/entitlements";
+import { BillingError, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireOrganization, requireRole, requireSecretKeyOrUser } from "../context";

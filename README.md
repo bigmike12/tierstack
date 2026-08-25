@@ -1,15 +1,15 @@
-# Tierbase
+# Tierstack
 
 Billing, subscription and payment-orchestration infrastructure for African
-software businesses. Tierbase is the **system of record** for the billing
+software businesses. Tierstack is the **system of record** for the billing
 lifecycle; Paystack, Monnify and Flutterwave are payment rails it drives, not
 the source of truth for anything.
 
-> **Branding.** The product is Tierbase, on `gettierbase.com`. The indirection
+> **Branding.** The product is Tierstack, on `gettierstack.com`. The indirection
 > is kept anyway: the display name, URLs and email sender are read from
 > configuration (`packages/shared/src/config.ts`), never written into the
 > engine, so a white-label deployment or a second domain stays an environment
-> change. Packages are scoped `@tierbase/*`.
+> change. Packages are scoped `@tierstack/*`.
 
 ---
 
@@ -151,7 +151,7 @@ reads as "no data yet".
 | Settings | Billing policy, organization, team |
 
 There is no marketing site yet — this is the operator dashboard. The public
-`gettierbase.com` site is separate work.
+`gettierstack.com` site is separate work.
 
 ---
 
@@ -398,7 +398,7 @@ The Prisma client is generated in its Rust-free configuration (`engineType =
 ## Repository layout
 
 ```
-tierbase/
+tierstack/
 ├── apps/
 │   ├── api/                   Fastify HTTP API
 │   └── dashboard/             Next.js operator UI
@@ -451,4 +451,4 @@ spec in one place:
 
 Not in the specification but needed before launch: transactional email (dunning
 that cannot tell a customer their card failed is decorative), a platform
-back-office for Tierbase itself, and an NDPR/PCI scope review.
+back-office for Tierstack itself, and an NDPR/PCI scope review.

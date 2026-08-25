@@ -1,5 +1,5 @@
-import type { PrismaClient } from "@tierbase/database";
-import type { EntitlementCache } from "@tierbase/entitlements";
+import type { PrismaClient } from "@tierstack/database";
+import type { EntitlementCache } from "@tierstack/entitlements";
 
 export interface UsageJobContext {
   prisma: PrismaClient;

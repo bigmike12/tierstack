@@ -1,6 +1,6 @@
-import type { PrismaClient } from "@tierbase/database";
-import { BillingError, newId } from "@tierbase/shared";
-import { getPeriodUsage } from "@tierbase/usage";
+import type { PrismaClient } from "@tierstack/database";
+import { BillingError, newId } from "@tierstack/shared";
+import { getPeriodUsage } from "@tierstack/usage";
 import type { EntitlementCache, CachedContext } from "./cache";
 import { resolveEntitlement } from "./resolver";
 import type {

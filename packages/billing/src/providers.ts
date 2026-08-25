@@ -1,4 +1,4 @@
-import type { TransactionClient } from "@tierbase/database";
+import type { TransactionClient } from "@tierstack/database";
 import {
   decryptCredentials,
   routePayment,
@@ -8,10 +8,10 @@ import {
   type ProviderPaymentMethodType,
   type RoutableProvider,
   type RoutingRequest,
-} from "@tierbase/payments-core";
-import { MockPaymentProvider, RedisMockStore, type RedisLike } from "@tierbase/payments-mock";
-import { PaystackPaymentProvider } from "@tierbase/payments-paystack";
-import { BillingError, loadBranding, type CurrencyCode } from "@tierbase/shared";
+} from "@tierstack/payments-core";
+import { MockPaymentProvider, RedisMockStore, type RedisLike } from "@tierstack/payments-mock";
+import { PaystackPaymentProvider } from "@tierstack/payments-paystack";
+import { BillingError, loadBranding, type CurrencyCode } from "@tierstack/shared";
 
 export interface ProviderFactoryDeps {
   redis: RedisLike;

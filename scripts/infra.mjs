@@ -103,8 +103,8 @@ async function startDocker(missing) {
         "Either install Docker Desktop, or run the two services natively:\n" +
         "  brew install postgresql@16 redis\n" +
         "  brew services start postgresql@16 && brew services start redis\n" +
-        "  createuser -s tierbase && createdb -O tierbase tierbase\n" +
-        "  psql -d tierbase -c \"ALTER USER tierbase WITH PASSWORD 'tierbase';\""
+        "  createuser -s tierstack && createdb -O tierstack tierstack\n" +
+        "  psql -d tierstack -c \"ALTER USER tierstack WITH PASSWORD 'tierstack';\""
     );
   }
 

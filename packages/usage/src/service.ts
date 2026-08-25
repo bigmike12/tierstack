@@ -1,5 +1,5 @@
-import type { PrismaClient, TransactionClient } from "@tierbase/database";
-import { BillingError, newId } from "@tierbase/shared";
+import type { PrismaClient, TransactionClient } from "@tierstack/database";
+import { BillingError, newId } from "@tierstack/shared";
 import { assertAggregation, type UsageAggregation } from "./aggregation";
 import { billableBlocks, computeQuota, type QuotaResult } from "./quota";
 

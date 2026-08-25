@@ -1,4 +1,4 @@
-import type { PrismaClient, TransactionClient } from "@tierbase/database";
+import type { PrismaClient, TransactionClient } from "@tierstack/database";
 import {
   requireCapability,
   type PaymentProvider,
@@ -6,14 +6,14 @@ import {
   type ProviderKind,
   type ProviderPaymentMethodType,
   type TokenizedPaymentMethod,
-} from "@tierbase/payments-core";
+} from "@tierstack/payments-core";
 import {
   BillingError,
   assertCurrency,
   money,
   newId,
   type CurrencyCode,
-} from "@tierbase/shared";
+} from "@tierstack/shared";
 import { applyPaymentToInvoice, assertPayable } from "./invoice";
 import { openGracePeriod } from "./grace";
 import { resolveProviders, type ProviderFactoryDeps } from "./providers";

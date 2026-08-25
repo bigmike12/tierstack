@@ -16,8 +16,8 @@ import {
   type RefundResult,
   type WebhookRequest,
   type WebhookVerificationResult,
-} from "@tierbase/payments-core";
-import { BillingError } from "@tierbase/shared";
+} from "@tierstack/payments-core";
+import { BillingError } from "@tierstack/shared";
 import { HttpPaystackTransport, unwrap, type PaystackTransport } from "./client";
 import {
   PAYSTACK_CURRENCIES,
@@ -137,7 +137,7 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
         // how a payment is tied to its subscription without a second lookup.
         metadata: {
           ...(input.metadata ?? {}),
-          tierbase_customer_id: input.customer.customerId,
+          tierstack_customer_id: input.customer.customerId,
           ...(input.description ? { description: input.description } : {}),
         },
       }),
@@ -193,7 +193,7 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
         authorization_code: input.paymentMethod.providerPaymentMethodRef,
         metadata: {
           ...(input.metadata ?? {}),
-          tierbase_customer_id: input.customer.customerId,
+          tierstack_customer_id: input.customer.customerId,
         },
       }),
       "authorization charge"
@@ -210,7 +210,7 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
         ...(firstName ? { first_name: firstName } : {}),
         ...(rest.length > 0 ? { last_name: rest.join(" ") } : {}),
         ...(input.phone ? { phone: input.phone } : {}),
-        metadata: { ...(input.metadata ?? {}), tierbase_customer_id: input.customerId },
+        metadata: { ...(input.metadata ?? {}), tierstack_customer_id: input.customerId },
       }),
       "customer creation"
     );
@@ -229,7 +229,7 @@ export class PaystackPaymentProvider extends BasePaymentProvider {
         // The slug is the URL, and it must be stable per reference so the same
         // link is never created twice.
         slug: input.reference.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
-        metadata: { ...(input.metadata ?? {}), tierbase_reference: input.reference },
+        metadata: { ...(input.metadata ?? {}), tierstack_reference: input.reference },
       }),
       "payment page creation"
     );

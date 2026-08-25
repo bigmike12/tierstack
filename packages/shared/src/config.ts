@@ -1,18 +1,18 @@
 /**
  * Branding.
  *
- * The product is Tierbase. The indirection here is kept deliberately: every
+ * The product is Tierstack. The indirection here is kept deliberately: every
  * user-visible name, URL and email sender still resolves through configuration
  * rather than being written into the engine, so a rebrand, a white-label
  * deployment or a second domain is an environment change and nothing more.
  */
-export const PROJECT_IDENTIFIER = "TIERBASE" as const;
+export const PROJECT_IDENTIFIER = "TIERSTACK" as const;
 
 /** Display name used when nothing overrides it. */
-export const DEFAULT_APP_NAME = "Tierbase";
+export const DEFAULT_APP_NAME = "Tierstack";
 
 /** Registrable domain the hosted product runs on. */
-export const DEFAULT_DOMAIN = "gettierbase.com";
+export const DEFAULT_DOMAIN = "gettierstack.com";
 
 export interface BrandingConfig {
   /** Display name used in dashboards, portal copy and emails. */

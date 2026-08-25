@@ -1,5 +1,5 @@
 {
-  "name": "@tierbase/billing",
+  "name": "@tierstack/billing",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
@@ -8,12 +8,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tierbase/database": "0.1.0",
-    "@tierbase/payments-core": "0.1.0",
-    "@tierbase/payments-mock": "0.1.0",
-    "@tierbase/payments-paystack": "0.1.0",
-    "@tierbase/shared": "0.1.0",
-    "@tierbase/usage": "0.1.0",
+    "@tierstack/database": "0.1.0",
+    "@tierstack/payments-core": "0.1.0",
+    "@tierstack/payments-mock": "0.1.0",
+    "@tierstack/payments-paystack": "0.1.0",
+    "@tierstack/shared": "0.1.0",
+    "@tierstack/usage": "0.1.0",
     "zod": "^3.24.1"
   }
 }
