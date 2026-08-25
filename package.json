@@ -1,8 +1,8 @@
 {
-  "name": "tierbase",
+  "name": "tierstack",
   "private": true,
   "version": "0.1.0",
-  "description": "Tierbase — provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
+  "description": "Tierstack — provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
   "workspaces": [
     "packages/*",
     "packages/payments/*",
@@ -17,9 +17,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "node scripts/infra.mjs && turbo run dev --parallel",
-    "dev:api": "turbo run dev --filter=@tierbase/api",
-    "dev:dashboard": "turbo run dev --filter=@tierbase/dashboard",
-    "dev:worker": "turbo run dev --filter=@tierbase/billing-worker",
+    "dev:api": "turbo run dev --filter=@tierstack/api",
+    "dev:dashboard": "turbo run dev --filter=@tierstack/dashboard",
+    "dev:worker": "turbo run dev --filter=@tierstack/billing-worker",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "node scripts/infra.mjs && prisma migrate dev --schema prisma/schema.prisma",
     "db:deploy": "node scripts/infra.mjs && prisma migrate deploy --schema prisma/schema.prisma",
@@ -27,7 +27,7 @@
     "db:seed": "node scripts/infra.mjs && tsx prisma/seed.ts",
     "demo:data": "node scripts/infra.mjs && tsx scripts/demo-data.ts",
     "e2e": "node scripts/infra.mjs && tsx scripts/e2e.ts",
-    "dev:usage-worker": "turbo run dev --filter=@tierbase/usage-worker",
+    "dev:usage-worker": "turbo run dev --filter=@tierstack/usage-worker",
     "up": "node scripts/infra.mjs",
     "down": "docker compose down",
     "fresh": "node scripts/infra.mjs && yarn db:reset && yarn demo:data"

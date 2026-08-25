@@ -3,7 +3,7 @@ import "./globals.css";
 
 // Read from configuration rather than written in, so a white-label deployment
 // or a second brand is an environment variable rather than a code change.
-const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierbase";
+const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierstack";
 
 export const metadata: Metadata = {
   title: { default: appName, template: `%s · ${appName}` },

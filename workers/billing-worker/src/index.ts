@@ -1,10 +1,10 @@
-import { loadRootEnv } from "@tierbase/shared";
+import { loadRootEnv } from "@tierstack/shared";
 
 // Load the monorepo .env before anything reads process.env.
 loadRootEnv();
 
 import { Queue, Worker, type Job } from "bullmq";
-import { createPrismaClient } from "@tierbase/database";
+import { createPrismaClient } from "@tierstack/database";
 import Redis from "ioredis";
 import {
   runGraceExpiry,

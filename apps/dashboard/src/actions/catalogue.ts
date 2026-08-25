@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { BillingError, parseMoney } from "@tierbase/shared";
+import { BillingError, parseMoney } from "@tierstack/shared";
 import { ApiError, apiFetch } from "@/lib/api";
 
 export interface CatalogueState {

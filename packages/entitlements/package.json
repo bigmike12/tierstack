@@ -1,5 +1,5 @@
 {
-  "name": "@tierbase/entitlements",
+  "name": "@tierstack/entitlements",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
@@ -8,8 +8,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tierbase/database": "0.1.0",
-    "@tierbase/shared": "0.1.0",
-    "@tierbase/usage": "0.1.0"
+    "@tierstack/database": "0.1.0",
+    "@tierstack/shared": "0.1.0",
+    "@tierstack/usage": "0.1.0"
   }
 }

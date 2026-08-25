@@ -1,4 +1,4 @@
-import { CURRENCIES, type CurrencyCode } from "@tierbase/shared";
+import { CURRENCIES, type CurrencyCode } from "@tierstack/shared";
 
 /**
  * Amounts arrive from the API as integer minor units. They are only ever

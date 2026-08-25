@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { applyPaymentResult, instantiateProvider } from "@tierbase/billing";
-import type { PrismaClient } from "@tierbase/database";
-import { BillingError, newId, paginated, parsePageQuery, searchFilter, success } from "@tierbase/shared";
+import { applyPaymentResult, instantiateProvider } from "@tierstack/billing";
+import type { PrismaClient } from "@tierstack/database";
+import { BillingError, newId, paginated, parsePageQuery, searchFilter, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { requireOrganization } from "../context";
 import type { AppConfig } from "../env";

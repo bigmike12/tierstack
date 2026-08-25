@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { CURRENCIES } from "@tierbase/shared";
+import { CURRENCIES } from "@tierstack/shared";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mono, PageHeader } from "@/components/ui/shell";
 import { apiFetchOrNull } from "@/lib/api";

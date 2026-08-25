@@ -1,6 +1,6 @@
 import { Wordmark } from "@/components/wordmark";
 
-const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierbase";
+const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierstack";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (

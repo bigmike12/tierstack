@@ -1,5 +1,5 @@
-import type { PrismaClient } from "@tierbase/database";
-import { success } from "@tierbase/shared";
+import type { PrismaClient } from "@tierstack/database";
+import { success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { requireOrganization } from "../context";
 

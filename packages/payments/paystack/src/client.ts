@@ -1,4 +1,4 @@
-import { BillingError } from "@tierbase/shared";
+import { BillingError } from "@tierstack/shared";
 
 /**
  * The thin HTTP layer between the adapter and api.paystack.co.

@@ -2,7 +2,7 @@
  * Walks one real payment all the way through Paystack and checks what actually
  * happened at every step.
  *
- *   npx tsx scripts/verify-paystack.ts --key sk_test_YOUR_TIERBASE_KEY
+ *   npx tsx scripts/verify-paystack.ts --key sk_test_YOUR_TIERSTACK_KEY
  *
  * This talks to the running API over HTTP rather than building its own server,
  * which matters: the webhook Paystack sends has to reach the same process that
@@ -19,7 +19,7 @@
  */
 
 import { createInterface } from "node:readline/promises";
-import { loadRootEnv } from "@tierbase/shared";
+import { loadRootEnv } from "@tierstack/shared";
 
 loadRootEnv();
 
@@ -33,7 +33,7 @@ const flag = (name: string): string | undefined => {
 const hasFlag = (name: string): boolean => args.includes(`--${name}`);
 
 const API = (flag("api") ?? process.env.API_URL ?? "http://localhost:4000").replace(/\/$/, "");
-const KEY = flag("key") ?? process.env.TIERBASE_API_KEY ?? "";
+const KEY = flag("key") ?? process.env.TIERSTACK_API_KEY ?? "";
 const EMAIL = flag("email") ?? `paystack-test-${Date.now()}@gmail.com`;
 const EXTERNAL_ID = `user_paystack_${Date.now()}`;
 const RUN_RENEWAL_CHECK = hasFlag("renew");
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
 
   if (!KEY) {
     console.error(
-      "Pass a Tierbase secret key:\n" +
+      "Pass a Tierstack secret key:\n" +
         "  npx tsx scripts/verify-paystack.ts --key sk_test_...\n\n" +
         "Create one in the dashboard under API Keys if you do not have it.\n"
     );
@@ -253,7 +253,7 @@ async function main(): Promise<void> {
       },
       priceId: price.id,
       collectPayment: true,
-      callbackUrl: `${process.env.APP_URL ?? "http://localhost:3000"}/subscriptions`,
+      callbackUrl: `${process.env.APP_URL ?? "http://localhost:8181"}/subscriptions`,
     },
     { "idempotency-key": `paystack-verify-${Date.now()}` }
   );

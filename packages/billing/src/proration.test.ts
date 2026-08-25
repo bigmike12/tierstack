@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { money } from "@tierbase/shared";
+import { money } from "@tierstack/shared";
 import { calculateProration, calculateSeatProration, sumProrationLines } from "./proration";
 
 const periodStart = new Date("2026-08-01T00:00:00Z");

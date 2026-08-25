@@ -29,7 +29,7 @@ const nextConfig = {
   reactStrictMode: true,
   // The dashboard imports the shared money and interval helpers straight from
   // monorepo source rather than a build artefact.
-  transpilePackages: ["@tierbase/shared"],
+  transpilePackages: ["@tierstack/shared"],
   eslint: { ignoreDuringBuilds: true },
   env: {
     API_URL: process.env.API_URL ?? "http://localhost:4000",

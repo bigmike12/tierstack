@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@tierbase/database";
+import type { PrismaClient } from "@tierstack/database";
 import {
   BillingError,
   addInterval,
@@ -8,11 +8,11 @@ import {
   money,
   newId,
   type CurrencyCode,
-} from "@tierbase/shared";
+} from "@tierstack/shared";
 import { resolveCustomer, type CustomerInput } from "./customers";
 import { createInvoice, finalizeInvoice } from "./invoice";
 import { calculateProration, calculateSeatProration } from "./proration";
-import { getUsageSnapshot } from "@tierbase/usage";
+import { getUsageSnapshot } from "@tierstack/usage";
 import {
   assertBillablePriceModel,
   buildRecurringLines,

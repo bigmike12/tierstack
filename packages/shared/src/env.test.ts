@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadRootEnv, requireEnv } from "./env";
 
 function workspace(envContents: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "tierbase-env-"));
+  const dir = mkdtempSync(join(tmpdir(), "tierstack-env-"));
   writeFileSync(join(dir, "turbo.json"), "{}");
   writeFileSync(join(dir, ".env"), envContents);
   return dir;
@@ -50,7 +50,7 @@ describe("root env loading", () => {
   });
 
   it("returns null when there is no .env to load", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tierbase-noenv-"));
+    const dir = mkdtempSync(join(tmpdir(), "tierstack-noenv-"));
     expect(loadRootEnv(dir)).toBeNull();
   });
 

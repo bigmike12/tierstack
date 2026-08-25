@@ -70,7 +70,7 @@ export default async function SettingsPage() {
                   { label: "Display name", value: <Mono>APP_NAME</Mono> },
                   { label: "Email sender", value: <Mono>EMAIL_SENDER</Mono> },
                   { label: "Invoice prefix", value: <Mono>INVOICE_NUMBER_PREFIX</Mono> },
-                  { label: "Package scope", value: <Mono>@tierbase/*</Mono> },
+                  { label: "Package scope", value: <Mono>@tierstack/*</Mono> },
                 ]}
               />
             </CardContent>

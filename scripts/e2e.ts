@@ -7,7 +7,7 @@
  *   npm run e2e
  */
 import { createHmac } from "node:crypto";
-import { loadRootEnv } from "@tierbase/shared";
+import { loadRootEnv } from "@tierstack/shared";
 
 // Load the monorepo .env before anything reads process.env.
 loadRootEnv();

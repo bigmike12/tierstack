@@ -1,4 +1,4 @@
-import { addDays } from "@tierbase/shared";
+import { addDays } from "@tierstack/shared";
 
 export type GracePeriodAccess = "FULL_ACCESS" | "RESTRICTED_ACCESS" | "NO_ACCESS";
 export type DunningFailureAction = "MARK_UNPAID" | "CANCEL" | "PAUSE";
