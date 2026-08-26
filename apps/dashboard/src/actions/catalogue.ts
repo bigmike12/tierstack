@@ -246,14 +246,26 @@ export async function updatePrice(_prev: CatalogueState, formData: FormData): Pr
     return failure(error, values);
   }
 
+  let result: {
+    id: string;
+    supersededPriceId?: string | null;
+    subscribersRetained?: number;
+  };
   try {
-    await apiFetch(`/v1/prices/${priceId}`, { method: "PATCH", body: JSON.stringify(body) });
+    result = await apiFetch(`/v1/prices/${priceId}`, { method: "PATCH", body: JSON.stringify(body) });
   } catch (error) {
     return failure(error, values);
   }
 
   revalidatePath("/plans");
   revalidatePath(`/plans/${planId}`);
+  revalidatePath("/subscriptions");
+
+  // A supersede means the row being edited no longer exists as the current
+  // version, so staying on its URL would leave you editing an archived price.
+  if (result.supersededPriceId) {
+    redirect(`/plans/${planId}/prices/${result.id}/edit?superseded=${result.subscribersRetained ?? 0}`);
+  }
   return { message: "Price saved. New billing uses these details." };
 }
 

@@ -303,6 +303,11 @@ model Price {
   active         Boolean      @default(true)
   metadata       Json         @default("{}")
 
+  /// Position in a code lineage. Editing the economics of a price that already
+  /// has subscribers creates version n+1 rather than repricing them in place.
+  version           Int     @default(1)
+  supersedesPriceId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -310,10 +315,13 @@ model Price {
   plan          Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
   usageMeter    UsageMeter?    @relation(fields: [usageMeterId], references: [id])
   subscriptions Subscription[]
+  supersedes    Price?         @relation("PriceVersions", fields: [supersedesPriceId], references: [id])
+  supersededBy  Price[]        @relation("PriceVersions")
 
   @@unique([organizationId, code])
   @@index([organizationId, planId])
   @@index([planId, active])
+  @@index([supersedesPriceId])
   @@map("prices")
 }
 

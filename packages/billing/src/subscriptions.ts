@@ -238,11 +238,16 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
     const settings = await loadBillingSettings(tx, subscription.organizationId);
     const currency = assertCurrency(subscription.price.currency);
     const periodStart = subscription.currentPeriodEnd;
-    const periodEnd = addInterval(
-      periodStart,
-      priceInterval(snapshot),
-      subscription.billingAnchorDay ?? undefined
-    );
+
+    // A trial ends on the day it ends, not on the day the customer signed up.
+    // The anchor is re-taken here so the first paid period is a whole period:
+    // sign up on the 1st with a 10-day trial and billing settles on the 11th,
+    // rather than snapping back to the 1st and charging a full month for 20
+    // days of service.
+    const anchorDay =
+      status === "TRIALING" ? periodStart.getUTCDate() : (subscription.billingAnchorDay ?? undefined);
+
+    const periodEnd = addInterval(periodStart, priceInterval(snapshot), anchorDay);
 
     const lines = buildRecurringLines({
       price: snapshot,
@@ -303,15 +308,41 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
 
     await tx.subscription.update({
       where: { id: subscription.id },
-      data: { currentPeriodStart: periodStart, currentPeriodEnd: periodEnd },
+      data: {
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: periodEnd,
+        ...(status === "TRIALING" && anchorDay !== undefined ? { billingAnchorDay: anchorDay } : {}),
+      },
     });
 
-    // A trial that reaches its end owes money for the first real period.
-    if (status === "TRIALING" && finalized.status !== "PAID") {
+    // A trial that reaches its end owes money for the first real period — but
+    // only a trial with nothing to charge has *lapsed*. When there is a stored
+    // card, the subscription stays TRIALING until the charge is attempted, and
+    // the result of that charge decides: TRIALING -> ACTIVE if it settles,
+    // TRIALING -> PAST_DUE -> GRACE_PERIOD if it does not. Marking it PAST_DUE
+    // here would put every converting customer through a past-due state they
+    // were never in, and fire the dunning that goes with it.
+    const collectable =
+      subscription.paymentMethodId !== null ||
+      (await tx.paymentMethod.count({
+        where: {
+          organizationId: subscription.organizationId,
+          customerId: subscription.customerId,
+          status: "ACTIVE",
+        },
+      })) > 0;
+
+    if (status === "TRIALING" && !collectable) {
       await applyTransition(tx, subscription.id, status, "PAST_DUE", "trial_ended");
     }
 
-    return { renewed: true as const, invoiceId: finalized.id, amountDue: finalized.amountDue };
+    return {
+      renewed: true as const,
+      invoiceId: finalized.id,
+      amountDue: finalized.amountDue,
+      /** What the subscription was before this period opened. */
+      previousStatus: status,
+    };
   });
 }
 

@@ -142,13 +142,18 @@ export function registerSubscriptionRoutes(
    */
   app.get("/v1/subscriptions", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as Record<string, unknown> & { customerId?: string; status?: string };
+    const query = request.query as Record<string, unknown> & {
+      customerId?: string;
+      status?: string;
+      priceId?: string;
+    };
     const page = parsePageQuery(query, { defaultLimit: 25 });
 
     const where = {
       organizationId,
       ...(query.customerId ? { customerId: query.customerId } : {}),
       ...(query.status ? { status: query.status as never } : {}),
+      ...(query.priceId ? { priceId: query.priceId } : {}),
       ...(page.q
         ? {
             OR: [

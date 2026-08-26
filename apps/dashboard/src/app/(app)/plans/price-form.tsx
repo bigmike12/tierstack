@@ -66,7 +66,14 @@ function majorAmount(amount: number | null | undefined): string {
   // this browser component free of the shared package barrel, which also
   // exports Node-only ID helpers.
   const decimals = 2;
-  return String(amount / 10 ** decimals);
+  // Integer division and a padded remainder rather than `amount / 100`. The
+  // division would be the only place in the codebase where an amount becomes a
+  // float, and the rule against that does not stop being worth keeping because
+  // this particular one happens to round-trip.
+  const factor = 10 ** decimals;
+  const whole = Math.trunc(amount / factor);
+  const fraction = Math.abs(amount % factor);
+  return fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(decimals, "0")}`;
 }
 
 /**
@@ -92,13 +99,24 @@ export function EditPriceForm({
   price,
   currencies,
   meters,
+  subscribers,
 }: {
   planId: string;
   price: Price;
   currencies: string[];
   meters: { id?: string; code: string; name: string; unitLabel: string | null }[];
+  /** Live subscriptions bound to this price — what decides edit vs. version. */
+  subscribers: number;
 }) {
-  return <PriceForm planId={planId} price={price} currencies={currencies} meters={meters} />;
+  return (
+    <PriceForm
+      planId={planId}
+      price={price}
+      currencies={currencies}
+      meters={meters}
+      subscribers={subscribers}
+    />
+  );
 }
 
 function PriceForm({
@@ -106,13 +124,16 @@ function PriceForm({
   price,
   currencies,
   meters,
+  subscribers = 0,
 }: {
   planId: string;
   price?: Price;
   currencies: string[];
   meters: { id?: string; code: string; name: string; unitLabel: string | null }[];
+  subscribers?: number;
 }) {
   const editing = Boolean(price);
+  const versioned = editing && subscribers > 0;
   const [state, action] = useActionState<CatalogueState, FormData>(editing ? updatePrice : createPrice, {});
   const initialInterval = price ? intervalFor(price) : "MONTHLY";
   const [model, setModel] = useState(state.values?.model ?? price?.model ?? "FLAT_RECURRING");
@@ -127,6 +148,21 @@ function PriceForm({
       <input type="hidden" name="planId" value={planId} />
       {price ? <input type="hidden" name="priceId" value={price.id} /> : null}
       <Alert state={state} />
+
+      {editing ? (
+        versioned ? (
+          <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+            {subscribers} live subscription{subscribers === 1 ? "" : "s"} on this price. Changing the amount,
+            interval or metering publishes <strong>version {(price?.version ?? 1) + 1}</strong> and archives
+            this one — everyone already subscribed keeps paying what they signed up for until you move them
+            with a plan change. Nickname, trial length and the active flag save in place.
+          </p>
+        ) : (
+          <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            Nobody is subscribed to this price, so every field saves in place.
+          </p>
+        )
+      ) : null}
 
       <div className="grid gap-5 sm:grid-cols-2">
         {price ? (
@@ -154,8 +190,16 @@ function PriceForm({
       </Field>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <Field label="Currency">
-          <Select name="currency" defaultValue={state.values?.currency ?? price?.currency ?? currencies[0]}>
+        <Field
+          label="Currency"
+          hint={versioned ? "Add a separate price for another currency." : undefined}
+        >
+          {versioned ? <input type="hidden" name="currency" value={price?.currency ?? ""} /> : null}
+          <Select
+            name={versioned ? undefined : "currency"}
+            defaultValue={state.values?.currency ?? price?.currency ?? currencies[0]}
+            disabled={versioned}
+          >
             {currencies.map((code) => (
               <option key={code} value={code}>
                 {code}
@@ -282,8 +326,10 @@ function PriceForm({
         <Submit editing={editing} />
         <p className="text-xs text-muted-foreground">
           {editing
-            ? "Changes apply to future billing. Use a new price and a plan change when existing subscribers need grandfathered terms."
-            : "You can edit the price later. Use a new price and a plan change when existing subscribers need grandfathered terms."}
+            ? versioned
+              ? "Existing invoices are unchanged either way — they record what was charged at the time."
+              : "Once someone subscribes, editing what they pay publishes a new version instead of repricing them."
+            : "You can edit this later. Once someone is subscribed, editing what they pay publishes a new version rather than repricing them."}
         </p>
       </div>
     </form>

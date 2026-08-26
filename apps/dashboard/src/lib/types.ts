@@ -77,6 +77,9 @@ export interface Price {
   intervalCount: number;
   trialDays: number | null;
   active: boolean;
+  /** Position in a code lineage; 1 unless the price has been superseded. */
+  version?: number;
+  supersedesPriceId?: string | null;
   /** Set on USAGE_METERED and HYBRID prices only. */
   usageMeterId?: string | null;
   usageUnitAmount?: number | null;

@@ -96,6 +96,47 @@ export async function configureProvider(_prev: ActionState, formData: FormData):
   }
 }
 
+export async function updateProvider(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const rawCredentials = String(formData.get("credentials") ?? "").trim();
+  const credentials: Record<string, string> = {};
+
+  if (rawCredentials) {
+    for (const line of rawCredentials.split("\n")) {
+      const [key, ...rest] = line.split("=");
+      if (key && rest.length > 0) credentials[key.trim()] = rest.join("=").trim();
+    }
+  }
+
+  try {
+    await apiFetch(`/v1/payment-providers/${String(formData.get("configId"))}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        enabled: formData.get("enabled") === "on",
+        isDefault: formData.get("isDefault") === "on",
+        priority: Number(formData.get("priority")),
+        // Credentials are write-only. Omitting them preserves the sealed value.
+        ...(rawCredentials ? { credentials } : {}),
+      }),
+    });
+    revalidatePath("/payment-providers");
+    return { message: "Provider updated." };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function deleteProvider(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    await apiFetch(`/v1/payment-providers/${String(formData.get("configId"))}`, {
+      method: "DELETE",
+    });
+    revalidatePath("/payment-providers");
+    return { message: "Provider removed." };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
 export async function testProvider(formData: FormData): Promise<void> {
   await apiFetch(`/v1/payment-providers/${String(formData.get("configId"))}/test`, {
     method: "POST",

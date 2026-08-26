@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/ui/shell";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import type { ProviderConfig } from "@/lib/types";
-import { ProviderForm, TestButton } from "./form";
+import { ProviderEditor, ProviderForm, TestButton } from "./form";
 
 export const metadata: Metadata = { title: "Payment Providers" };
 
@@ -81,6 +81,7 @@ export default async function ProvidersPage() {
                         halfway through a charge.
                       </p>
                     )}
+                    <ProviderEditor config={config} />
                   </CardContent>
                 </Card>
               );
