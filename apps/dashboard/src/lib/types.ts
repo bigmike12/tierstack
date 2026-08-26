@@ -22,6 +22,11 @@ export interface BillingSettings {
   incompleteExpiryHours: number;
   defaultCurrency: string;
   autoCollect: boolean;
+  notificationsEnabled: boolean;
+  priceChangeNoticeDays: number;
+  trialEndingNoticeDays: number;
+  supportEmail: string | null;
+  senderName: string | null;
 }
 
 export interface OverviewMetrics {
@@ -118,9 +123,25 @@ export interface Subscription {
   paymentMethod?: PaymentMethod | null;
 }
 
+export interface EmailMessage {
+  id: string;
+  type: string;
+  toEmail: string;
+  subject: string;
+  status: "PENDING" | "SENT" | "FAILED" | "SUPPRESSED";
+  provider: string | null;
+  failureReason: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  /** How many collection attempts have failed on this invoice. */
+  dunningAttempts?: number;
+  /** When the ladder will try again. Null once it is paid or exhausted. */
+  nextRetryAt?: string | null;
   status: "DRAFT" | "OPEN" | "PAID" | "VOID" | "UNCOLLECTIBLE";
   currency: string;
   subtotal: number;

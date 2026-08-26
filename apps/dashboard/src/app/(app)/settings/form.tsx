@@ -101,6 +101,62 @@ export function BillingPolicyForm({ settings }: { settings: BillingSettings }) {
         </div>
       </div>
 
+      <fieldset className="mt-6 space-y-5 rounded-md border border-border p-4">
+        <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Customer email
+        </legend>
+
+        <label className="flex items-center gap-2 text-sm">
+          <Input
+            type="checkbox"
+            name="notificationsEnabled"
+            className="size-4"
+            defaultChecked={settings.notificationsEnabled}
+          />
+          Email customers about failed payments, price changes and trials ending
+        </label>
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field
+            label="Price-change notice"
+            hint="Days of warning before a new price applies at renewal. A rise a customer learns about from their bank statement is a chargeback."
+          >
+            <Input
+              name="priceChangeNoticeDays"
+              type="number"
+              min={0}
+              max={90}
+              defaultValue={settings.priceChangeNoticeDays}
+              required
+            />
+          </Field>
+          <Field label="Trial-ending notice" hint="Days of warning before a trial becomes a charge.">
+            <Input
+              name="trialEndingNoticeDays"
+              type="number"
+              min={0}
+              max={90}
+              defaultValue={settings.trialEndingNoticeDays}
+              required
+            />
+          </Field>
+        </div>
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field label="Sender name" hint="Who the email appears to be from. Defaults to your organization name.">
+            <Input name="senderName" defaultValue={settings.senderName ?? ""} placeholder="Kola Labs" />
+          </Field>
+          <Field label="Support address" hint="Where replies go. Blank means replies come back to the sender.">
+            <Input
+              name="supportEmail"
+              type="email"
+              defaultValue={settings.supportEmail ?? ""}
+              placeholder="help@yourcompany.com"
+            />
+          </Field>
+        </div>
+      </fieldset>
+
       <Submit />
     </form>
   );

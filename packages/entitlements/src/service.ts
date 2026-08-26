@@ -40,7 +40,19 @@ export async function loadEntitlementContext(
   });
 
   const settings = await prisma.billingSettings.findUnique({ where: { organizationId } });
-  const accessDuringGracePeriod = (settings?.accessDuringGracePeriod ??
+
+  // A subscription in a grace period carries a frozen copy of the policy that
+  // was in force when its payment failed, and that copy wins here.
+  //
+  // The alternative — reading the organization's current setting — would let a
+  // merchant who tightens access next Tuesday cut off a customer who lapsed
+  // last Monday under different terms. The whole reason the snapshot is written
+  // is that a recovery already under way should finish on the terms it started
+  // on, and access is the half of those terms the customer actually feels.
+  const frozen = (subscription?.gracePolicy ?? null) as { accessDuringGracePeriod?: string } | null;
+  const accessDuringGracePeriod = ((subscription?.status === "GRACE_PERIOD" &&
+    frozen?.accessDuringGracePeriod) ||
+    settings?.accessDuringGracePeriod ||
     "FULL_ACCESS") as GracePeriodAccess;
 
   const context: SubscriptionContext = {

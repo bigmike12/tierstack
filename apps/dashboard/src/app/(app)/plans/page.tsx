@@ -28,7 +28,7 @@ export default async function PlansPage() {
     <>
       <PageHeader
         title="Plans and prices"
-        description="A plan is the product; a price is one way to buy it. Several prices on one plan is how multiple currencies and billing intervals work without duplicating the plan."
+        description="A plan is the product; a price is one way to buy it. One plan can carry several."
         action={newPlanLink}
       />
 

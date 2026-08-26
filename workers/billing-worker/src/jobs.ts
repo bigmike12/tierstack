@@ -1,6 +1,7 @@
 import {
   applyTransition,
   attemptInvoicePayment,
+  loadBillingSettings,
   expireGracePeriods,
   expireIncompleteSubscriptions,
   renewSubscription,
@@ -88,6 +89,70 @@ export async function runRenewals(ctx: JobContext, now = new Date(), batchSize =
   }
 
   return { considered: due.length, renewed, collected, failed };
+}
+
+/**
+ * Works the dunning ladder.
+ *
+ * An invoice carries its own next retry time, written when the payment failed
+ * from the organization's own schedule — [0, 1, 3, 5] days after the *first*
+ * failure by default, never a constant in this file. Selecting on that column
+ * is the whole job: an invoice whose retries are exhausted has a null there and
+ * is simply not returned, and one that got paid in the meantime had it cleared.
+ *
+ * This is the difference between detecting a failed payment and recovering it.
+ * A card that declines on the 1st very often works on the 3rd — a temporary
+ * limit, a card reissued, a bank that blocks the first online charge — and
+ * without this job every one of those customers is lost at the end of their
+ * grace period having never been asked twice.
+ */
+export async function runDunningRetries(ctx: JobContext, now = new Date(), batchSize = 100) {
+  const due = await ctx.prisma.invoice.findMany({
+    where: { status: "OPEN", nextRetryAt: { lte: now }, subscriptionId: { not: null } },
+    select: { id: true, organizationId: true, dunningAttempts: true },
+    orderBy: { nextRetryAt: "asc" },
+    take: batchSize,
+  });
+
+  let attempted = 0;
+  let recovered = 0;
+  let exhausted = 0;
+
+  for (const invoice of due) {
+    try {
+      const settings = await loadBillingSettings(ctx.prisma as never, invoice.organizationId);
+
+      // Belt and braces: nextRetryAt should already be null past the limit, but
+      // an invoice that slipped through must not be retried forever.
+      if (invoice.dunningAttempts >= settings.maxRetryAttempts) {
+        await ctx.prisma.invoice.update({ where: { id: invoice.id }, data: { nextRetryAt: null } });
+        exhausted += 1;
+        continue;
+      }
+
+      attempted += 1;
+      const result = await attemptInvoicePayment(ctx.prisma, ctx.providerDeps, {
+        organizationId: invoice.organizationId,
+        invoiceId: invoice.id,
+        environment: ctx.environment,
+      });
+
+      if (result.status === "SUCCEEDED") {
+        recovered += 1;
+        ctx.log("dunning recovered a payment", { invoiceId: invoice.id, amount: result.amount });
+      }
+    } catch (error) {
+      // A failed attempt is the expected case here and reschedules itself
+      // inside applyPaymentResult. Anything else is worth naming.
+      ctx.log("dunning retry could not run", {
+        invoiceId: invoice.id,
+        reason: error instanceof BillingError ? error.code : "unknown",
+      });
+    }
+  }
+
+  if (attempted > 0) ctx.log("dunning ladder ran", { attempted, recovered, exhausted });
+  return { considered: due.length, attempted, recovered, exhausted };
 }
 
 /**

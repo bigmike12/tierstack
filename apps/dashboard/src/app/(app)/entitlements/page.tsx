@@ -76,7 +76,7 @@ export default async function EntitlementsPage({
     <>
       <PageHeader
         title="Entitlements"
-        description="What each customer may actually do. Definitions are cached in Redis; consumption is always read live from PostgreSQL, because a stale quota becomes a wrong invoice."
+        description="What each customer may actually do, and how much of their allowance is left."
       />
 
       {customerPage.total > 0 ? (
@@ -227,9 +227,7 @@ export default async function EntitlementsPage({
           <CardHeader>
             <CardTitle>Explicit entitlements</CardTitle>
             <CardDescription>
-              Rows that override the plan. A customer-specific entitlement beats the subscription, which
-              beats the plan — that is how support grants one exception without editing a plan everyone
-              else is on.
+              Exceptions for one customer or one subscription. The most specific rule wins.
             </CardDescription>
           </CardHeader>
           <CardContent className="px-0 pb-0">

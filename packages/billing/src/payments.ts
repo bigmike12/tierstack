@@ -15,7 +15,7 @@ import {
   type CurrencyCode,
 } from "@tierstack/shared";
 import { applyPaymentToInvoice, assertPayable } from "./invoice";
-import { openGracePeriod } from "./grace";
+import { nextRetryAt, openGracePeriod } from "./grace";
 import { resolveProviders, type ProviderFactoryDeps } from "./providers";
 import { loadDunningPolicy } from "./settings";
 import { applyTransition } from "./transitions";
@@ -31,6 +31,14 @@ export interface AttemptPaymentParams {
   callbackUrl?: string | null;
   /** Passed through to the provider; the mock rail reads `mockOutcome` from it. */
   metadata?: Record<string, unknown>;
+  /**
+   * Open a hosted checkout even when the customer has a stored card.
+   *
+   * Dunning needs this. Once automatic retries on the card have run out, the
+   * only useful thing an email can contain is a link the customer can actually
+   * pay through — and that link has to come from the provider, not be invented.
+   */
+  forceCheckout?: boolean;
 }
 
 export interface AttemptPaymentResult {
@@ -72,11 +80,13 @@ export async function attemptInvoicePayment(
   const currency = assertCurrency(invoice.currency);
   const amount = money(invoice.amountDue, currency);
 
-  const paymentMethod = await selectPaymentMethod(prisma, {
-    organizationId: params.organizationId,
-    customerId: invoice.customerId,
-    paymentMethodId: params.paymentMethodId ?? invoice.subscription?.paymentMethodId ?? null,
-  });
+  const paymentMethod = params.forceCheckout
+    ? null
+    : await selectPaymentMethod(prisma, {
+        organizationId: params.organizationId,
+        customerId: invoice.customerId,
+        paymentMethodId: params.paymentMethodId ?? invoice.subscription?.paymentMethodId ?? null,
+      });
 
   const lastSuccessful = await prisma.paymentAttempt.findFirst({
     where: { organizationId: params.organizationId, customerId: invoice.customerId, status: "SUCCEEDED" },
@@ -225,16 +235,6 @@ export async function applyPaymentResult(
     const invoice = attempt.invoice;
     const result = params.result;
 
-    // Webhook redeliveries or callback retries can report the same successful
-    // settlement more than once. Once an attempt is terminally succeeded, the
-    // invoice amount must not be incremented again.
-    if (attempt.status === "SUCCEEDED") {
-      return {
-        invoiceStatus: invoice.status,
-        subscriptionStatus: invoice.subscription?.status as SubscriptionStatus | undefined,
-      };
-    }
-
     if (result.status === "SUCCEEDED") {
       // Never trust the amount implied by a redirect. Compare what the provider
       // says it actually collected against what the invoice asked for.
@@ -344,9 +344,25 @@ async function failInvoiceInTransaction(
     where: { invoiceId: invoice.id, status: "FAILED" },
   });
 
+  // The retry ladder is anchored to the *first* failure, not to this one, so a
+  // schedule of [0, 1, 3, 5] means days after the payment first bounced rather
+  // than a compounding gap that drifts further out with every attempt.
+  const firstFailure = await tx.paymentAttempt.findFirst({
+    where: { invoiceId: invoice.id, status: "FAILED" },
+    orderBy: { createdAt: "asc" },
+    select: { createdAt: true },
+  });
+
   await tx.invoice.update({
     where: { id: invoice.id },
-    data: { dunningAttempts: failedAttempts },
+    data: {
+      dunningAttempts: failedAttempts,
+      // `failedAttempts` counts the original charge too, and that was not a
+      // retry. Subtracting it is what makes the first entry in the schedule
+      // reachable: [0, 1, 3, 5] means the first retry is same-day, which is
+      // where most recoveries happen.
+      nextRetryAt: nextRetryAt(policy, firstFailure?.createdAt ?? now, Math.max(failedAttempts - 1, 0)),
+    },
   });
 
   if (["CANCELED", "EXPIRED", "PAUSED", "UNPAID", "GRACE_PERIOD"].includes(current)) {

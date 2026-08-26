@@ -33,6 +33,11 @@ export async function updateBillingSettings(_prev: ActionState, formData: FormDa
         invoiceDueDays: Number(formData.get("invoiceDueDays")),
         incompleteExpiryHours: Number(formData.get("incompleteExpiryHours")),
         autoCollect: formData.get("autoCollect") === "on",
+        notificationsEnabled: formData.get("notificationsEnabled") === "on",
+        priceChangeNoticeDays: Number(formData.get("priceChangeNoticeDays")),
+        trialEndingNoticeDays: Number(formData.get("trialEndingNoticeDays")),
+        supportEmail: String(formData.get("supportEmail") ?? "").trim() || null,
+        senderName: String(formData.get("senderName") ?? "").trim() || null,
       }),
     });
     revalidatePath("/settings");

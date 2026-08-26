@@ -329,9 +329,9 @@ function PriceForm({
         <p className="text-xs text-muted-foreground">
           {editing
             ? versioned
-              ? "Changing the billing interval is the exception: it will not roll anyone forward on its own, because moving somebody from monthly to annual is a plan change, not a price rise."
-              : "Once someone subscribes, editing what they pay publishes a new version that takes effect at their next renewal."
-            : "You can edit this later. Once someone is subscribed, an edit publishes a new version that takes effect at their next renewal."}
+              ? "Changing the billing interval will not move anyone on its own — that is a plan change."
+              : "Editing what they pay takes effect at their next renewal."
+            : "You can edit this later. Once someone is subscribed, an edit takes effect at their next renewal."}
         </p>
       </div>
     </form>

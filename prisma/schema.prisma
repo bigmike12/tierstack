@@ -78,6 +78,7 @@ model Organization {
   prices          Price[]
   customers       Customer[]
   paymentMethods  PaymentMethod[]
+  emailMessages   EmailMessage[]
   subscriptions   Subscription[]
   invoices        Invoice[]
   lineItems       InvoiceLineItem[]
@@ -192,6 +193,20 @@ model BillingSettings {
   defaultCurrency        String               @default("NGN")
   /// Collect payment automatically when an invoice is finalized.
   autoCollect            Boolean              @default(true)
+
+  /// Transactional email. Off means the engine still records what it would have
+  /// sent, so a developer can see the gap rather than wonder why nothing arrived.
+  notificationsEnabled   Boolean              @default(true)
+  /// Days of warning before a superseded price applies at the next renewal. A
+  /// price rise the customer learns about from their bank statement is a
+  /// chargeback; this is the notice that prevents it.
+  priceChangeNoticeDays  Int                  @default(7)
+  /// Days of warning before a trial converts to a paid period.
+  trialEndingNoticeDays  Int                  @default(3)
+  /// Reply-to on customer email. Falls back to the platform sender.
+  supportEmail           String?
+  /// Sender name customers see. Falls back to the organization name.
+  senderName             String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -907,6 +922,53 @@ model CreditLedgerEntry {
 // ---------------------------------------------------------------------------
 // Infrastructure: webhooks, idempotency, portal sessions, audit
 // ---------------------------------------------------------------------------
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+  /// Recorded but deliberately not sent, because the organization has
+  /// transactional email switched off.
+  SUPPRESSED
+}
+
+/// Every customer email the platform has decided to send, whether or not it
+/// left the building. Append-only in practice: a row is claimed before the
+/// provider is called, so a crash mid-flight leaves evidence rather than
+/// silence, and `dedupeKey` is what stops a retried job emailing somebody
+/// twice about the same failure.
+model EmailMessage {
+  id             String @id
+  organizationId String
+  customerId     String?
+  subscriptionId String?
+  invoiceId      String?
+
+  /// payment_failed, payment_recovered, dunning_exhausted, price_change,
+  /// trial_ending. A string rather than an enum so adding a template is not a
+  /// migration.
+  type      String
+  dedupeKey String
+
+  toEmail String
+  subject String
+
+  status            EmailStatus @default(PENDING)
+  provider          String?
+  providerMessageId String?
+  failureReason     String?
+  sentAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, type, createdAt])
+  @@index([status, createdAt])
+  @@map("email_messages")
+}
 
 enum WebhookEventStatus {
   RECEIVED

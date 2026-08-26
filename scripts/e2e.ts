@@ -12,7 +12,10 @@ import { loadRootEnv } from "@tierstack/shared";
 // Load the monorepo .env before anything reads process.env.
 loadRootEnv();
 
-import { expireIncompleteSubscriptions } from "../packages/billing/src";
+import { expireGracePeriods, expireIncompleteSubscriptions } from "../packages/billing/src";
+import { LogEmailTransport } from "../packages/notifications/src";
+import { runDunningRetries } from "../workers/billing-worker/src/jobs";
+import { runNotifications } from "../workers/billing-worker/src/notifications";
 import { buildServer } from "../apps/api/src/server";
 
 type Json = Record<string, any>;
@@ -1060,6 +1063,393 @@ async function main(): Promise<void> {
     trialOverride.body.data?.subscription?.status
   );
   check("skipping the trial invoices immediately", trialOverride.body.data?.amountDue === 400_000, trialOverride.body.data);
+
+  // -- 12h. Changing the policy under somebody already in a grace period ----
+  section("12h. Changing policy mid-recovery");
+
+  const midPolicyEmail = `midpolicy-${stamp}@example.test`;
+  const midPolicy = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `midpolicy-${stamp}` }),
+    payload: {
+      customer: { externalId: `midpolicy_${stamp}`, email: midPolicyEmail, name: "Mid Policy" },
+      priceId: "pro_monthly_ngn",
+      metadata: { mockOutcome: "SUCCESS" },
+    },
+  });
+  const midPolicySubId = midPolicy.body.data?.subscription?.id;
+  const midPolicyCustomerId = midPolicy.body.data?.subscription?.customerId;
+  await call("POST", `/mock/checkout/${midPolicy.body.data.payment.reference}/complete`, {
+    payload: { outcome: "SUCCESS" },
+  });
+  await call("POST", `/v1/subscriptions/${midPolicySubId}/renew`, {
+    headers: asKey(),
+    payload: { metadata: { mockOutcome: "FAILED" } },
+  });
+
+  const inGrace = await call("GET", `/v1/subscriptions/${midPolicySubId}`, { headers: asKey() });
+  const graceEndBefore = inGrace.body.data?.gracePeriodEnd;
+  check("they are in a grace period", inGrace.body.data?.status === "GRACE_PERIOD", inGrace.body.data?.status);
+  check("the policy in force is frozen onto them", inGrace.body.data?.gracePolicy?.gracePeriodDays === 3, inGrace.body.data?.gracePolicy);
+
+  const accessDuringGrace = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: midPolicyCustomerId, featureKey: "export_pdf" },
+  });
+  check("they still have service under the policy they lapsed on", accessDuringGrace.body.data?.access === true, accessDuringGrace.body);
+
+  // The organization now changes its mind about everything.
+  await call("PUT", "/v1/billing-settings", {
+    headers: asKey(),
+    payload: { gracePeriodDays: 30, failureAction: "CANCEL", accessDuringGracePeriod: "NO_ACCESS" },
+  });
+
+  const afterPolicyChange = await call("GET", `/v1/subscriptions/${midPolicySubId}`, { headers: asKey() });
+  check(
+    "a longer grace period does not extend one already running",
+    afterPolicyChange.body.data?.gracePeriodEnd === graceEndBefore,
+    { before: graceEndBefore, after: afterPolicyChange.body.data?.gracePeriodEnd }
+  );
+  check(
+    "the frozen policy still says what will happen at the end",
+    afterPolicyChange.body.data?.gracePolicy?.failureAction === "MARK_UNPAID",
+    afterPolicyChange.body.data?.gracePolicy?.failureAction
+  );
+
+  const accessAfterChange = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: midPolicyCustomerId, featureKey: "export_pdf" },
+  });
+  check(
+    "and tightening access does not cut off somebody who lapsed under the old terms",
+    accessAfterChange.body.data?.access === true,
+    accessAfterChange.body
+  );
+
+  const expiredUnderOldPolicy = await expireGracePeriods(
+    prisma,
+    organizationId,
+    new Date(new Date(graceEndBefore).getTime() + 60_000)
+  );
+  const outcome = expiredUnderOldPolicy.find((r) => r.subscriptionId === midPolicySubId);
+  check(
+    "the recovery ends on the terms it started on, not the new ones",
+    outcome?.status === "UNPAID",
+    outcome
+  );
+
+  // A customer who lapses from here does get the new policy.
+  const newPolicyEmail = `newpolicy-${stamp}@example.test`;
+  const newPolicy = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `newpolicy-${stamp}` }),
+    payload: {
+      customer: { externalId: `newpolicy_${stamp}`, email: newPolicyEmail, name: "New Policy" },
+      priceId: "pro_monthly_ngn",
+      metadata: { mockOutcome: "SUCCESS" },
+    },
+  });
+  await call("POST", `/mock/checkout/${newPolicy.body.data.payment.reference}/complete`, {
+    payload: { outcome: "SUCCESS" },
+  });
+  await call("POST", `/v1/subscriptions/${newPolicy.body.data.subscription.id}/renew`, {
+    headers: asKey(),
+    payload: { metadata: { mockOutcome: "FAILED" } },
+  });
+  const underNewPolicy = await call("GET", `/v1/subscriptions/${newPolicy.body.data.subscription.id}`, {
+    headers: asKey(),
+  });
+  const newGraceDays = Math.round(
+    (new Date(underNewPolicy.body.data.gracePeriodEnd).getTime() -
+      new Date(underNewPolicy.body.data.gracePeriodStart).getTime()) / 86_400_000
+  );
+  check("the next customer to lapse gets the new policy", newGraceDays === 30, { newGraceDays });
+  check(
+    "including what happens when their grace period ends",
+    underNewPolicy.body.data?.gracePolicy?.failureAction === "CANCEL",
+    underNewPolicy.body.data?.gracePolicy?.failureAction
+  );
+
+  const accessUnderNewPolicy = await call("POST", "/v1/entitlements/check", {
+    headers: asKey(),
+    payload: { customerId: underNewPolicy.body.data.customerId, featureKey: "export_pdf" },
+  });
+  check("and the new access policy applies to them", accessUnderNewPolicy.body.data?.access === false, accessUnderNewPolicy.body);
+
+  // Put it back so the sections after this one see the policy they expect.
+  await call("PUT", "/v1/billing-settings", {
+    headers: asKey(),
+    payload: { gracePeriodDays: 3, failureAction: "MARK_UNPAID", accessDuringGracePeriod: "FULL_ACCESS" },
+  });
+
+  // -- 12g. The dunning ladder and the email that goes with it ---------------
+  section("12g. Dunning retries and customer email");
+
+  const mailbox = new LogEmailTransport(() => {});
+  const jobCtx = {
+    prisma,
+    providerDeps: { redis, checkoutBaseUrl: "http://localhost:4000", encryptionKey: undefined },
+    environment: "TEST" as const,
+    log: () => {},
+  };
+  const mailCtx = { ...jobCtx, transport: mailbox };
+
+  /** The last message the transport actually delivered to one address. */
+  function lastMailTo(toEmail: string) {
+    return [...mailbox.sent].reverse().find((m) => m.to === toEmail);
+  }
+
+  /** Emails of one type sent to one address, newest last. */
+  async function outbox(type: string, toEmail?: string) {
+    return prisma.emailMessage.findMany({
+      where: { organizationId, type, ...(toEmail ? { toEmail } : {}) },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  const dunnedEmail = `dunned-${stamp}@example.test`;
+  const dunned = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `dunned-${stamp}` }),
+    payload: {
+      customer: { externalId: `dunned_${stamp}`, email: dunnedEmail, name: "Chidi Nwosu" },
+      priceId: "pro_monthly_ngn",
+      metadata: { mockOutcome: "SUCCESS" },
+    },
+  });
+  const dunnedSubId = dunned.body.data?.subscription?.id;
+  await call("POST", `/mock/checkout/${dunned.body.data.payment.reference}/complete`, {
+    payload: { outcome: "SUCCESS" },
+  });
+  check("a paying subscriber exists to be dunned", dunned.status === 201, dunned.body);
+
+  // The mock rail declines any charge against a token minted as mock_pm_fail_*.
+  // Rewriting the stored token is how this walks a real ladder: the retries the
+  // job makes are ordinary charges with no test directive attached, exactly as
+  // they will be in production, and they decline because the card does.
+  const dunnedMethod = await prisma.paymentMethod.findFirst({
+    where: { organizationId, customerId: dunned.body.data.subscription.customerId },
+  });
+  await prisma.paymentMethod.update({
+    where: { id: dunnedMethod!.id },
+    data: { providerPaymentMethodRef: `mock_pm_fail_${dunnedMethod!.id}` },
+  });
+
+  const declinedRenewal = await call("POST", `/v1/subscriptions/${dunnedSubId}/renew`, {
+    headers: asKey(),
+    payload: { metadata: { mockOutcome: "FAILED" } },
+  });
+  const dunnedInvoiceId = declinedRenewal.body.data?.invoiceId;
+  check("their renewal declines", declinedRenewal.body.data?.payment?.status === "FAILED", declinedRenewal.body.data?.payment);
+
+  const scheduled = await prisma.invoice.findUnique({ where: { id: dunnedInvoiceId } });
+  check("the failure schedules a retry rather than just recording itself", scheduled?.nextRetryAt !== null, scheduled?.nextRetryAt);
+  check("the invoice counts the failure", scheduled?.dunningAttempts === 1, scheduled?.dunningAttempts);
+
+  // This organization's schedule is [0, 1, 3, 5]; the first retry is same-day.
+  const firstAttemptAt = (
+    await prisma.paymentAttempt.findFirst({
+      where: { invoiceId: dunnedInvoiceId, status: "FAILED" },
+      orderBy: { createdAt: "asc" },
+    })
+  )?.createdAt;
+  check(
+    "the first retry is same-day, so the schedule's first entry is not skipped",
+    Math.abs(scheduled!.nextRetryAt!.getTime() - firstAttemptAt!.getTime()) < 1000,
+    { nextRetryAt: scheduled?.nextRetryAt, firstAttemptAt }
+  );
+
+  // -- the ladder runs -------------------------------------------------------
+  // Asserted on this invoice rather than on the batch counters: the suite runs
+  // against one database and earlier sections leave their own failed invoices
+  // behind, which is exactly the situation the job meets in production.
+  const runAt = new Date(Date.now() + 60_000);
+  await runDunningRetries(jobCtx as never, runAt);
+
+  const afterFirstRetry = await prisma.invoice.findUnique({ where: { id: dunnedInvoiceId } });
+  check("the ladder picks up the due invoice and charges again", afterFirstRetry?.dunningAttempts === 2, afterFirstRetry?.dunningAttempts);
+  check("and reschedules further out, not on a fixed loop", afterFirstRetry!.nextRetryAt!.getTime() > scheduled!.nextRetryAt!.getTime(), {
+    first: scheduled?.nextRetryAt,
+    second: afterFirstRetry?.nextRetryAt,
+  });
+
+  await runDunningRetries(jobCtx as never, runAt);
+  const afterSecondRun = await prisma.invoice.findUnique({ where: { id: dunnedInvoiceId } });
+  check(
+    "an invoice whose next retry has not arrived is left alone",
+    afterSecondRun?.dunningAttempts === 2,
+    afterSecondRun?.dunningAttempts
+  );
+
+  // -- the customer is told --------------------------------------------------
+  await runNotifications(mailCtx as never);
+  const failedMail = await outbox("payment_failed", dunnedEmail);
+  check("the customer is told their payment failed", failedMail.length >= 1, failedMail.map((m) => m.subject));
+  check("the email actually went out", failedMail.at(-1)?.status === "SENT", failedMail.at(-1));
+  check("it names the amount, not the minor units", lastMailTo(dunnedEmail)?.text.includes("₦10,000.00"), lastMailTo(dunnedEmail)?.text);
+  check("it names the next attempt date", /\d{1,2} \w+ \d{4}/.test(lastMailTo(dunnedEmail)?.text ?? ""), lastMailTo(dunnedEmail)?.text);
+  check("it is signed by the merchant, not the platform", Boolean(lastMailTo(dunnedEmail)?.fromName));
+
+  const before = mailbox.sent.filter((m) => m.to === dunnedEmail).length;
+  await runNotifications(mailCtx as never);
+  check(
+    "running the job again sends nothing twice",
+    mailbox.sent.filter((m) => m.to === dunnedEmail).length === before,
+    { before, after: mailbox.sent.filter((m) => m.to === dunnedEmail).length }
+  );
+
+  // -- the ladder runs out ---------------------------------------------------
+  // Interleaved the way the two schedulers actually run: the ladder makes an
+  // attempt, the notifier tells the customer about it, repeat.
+  let guard = 0;
+  while (guard < 10) {
+    const invoice = await prisma.invoice.findUnique({ where: { id: dunnedInvoiceId } });
+    if (!invoice?.nextRetryAt) break;
+    await runDunningRetries(jobCtx as never, new Date(invoice.nextRetryAt.getTime() + 60_000));
+    await runNotifications(mailCtx as never);
+    guard += 1;
+  }
+  const exhaustedInvoice = await prisma.invoice.findUnique({ where: { id: dunnedInvoiceId } });
+  check("the ladder stops at the configured attempt limit", exhaustedInvoice?.nextRetryAt === null, exhaustedInvoice?.dunningAttempts);
+  check("it did not retry forever", (exhaustedInvoice?.dunningAttempts ?? 0) <= 4, exhaustedInvoice?.dunningAttempts);
+  check("each failure is its own email, one per attempt", (await outbox("payment_failed", dunnedEmail)).length >= 2);
+
+  await runNotifications(mailCtx as never);
+  const finalMail = await outbox("dunning_exhausted", dunnedEmail);
+  check("a final email says the automatic attempts are over", finalMail.length === 1, finalMail.map((m) => m.subject));
+  check("and carries a link the customer can actually pay through", (lastMailTo(dunnedEmail)?.text ?? "").includes("http"), lastMailTo(dunnedEmail)?.text);
+
+  // -- recovery closes the loop ---------------------------------------------
+  const dunningRecovery = await call("POST", `/v1/invoices/${dunnedInvoiceId}/pay`, {
+    headers: asKey(),
+    payload: { metadata: { mockOutcome: "SUCCESS" } },
+  });
+  check("the outstanding invoice can still be paid", dunningRecovery.body.data?.status === "SUCCEEDED", dunningRecovery.body);
+
+  const settled = await prisma.invoice.findUnique({ where: { id: dunnedInvoiceId } });
+  check("paying clears the retry schedule", settled?.nextRetryAt === null && settled?.status === "PAID", settled?.status);
+
+  await runNotifications(mailCtx as never);
+  check("the customer is told it came good", (await outbox("payment_recovered", dunnedEmail)).length === 1);
+
+  const farFuture = new Date(Date.now() + 30 * 86_400_000);
+  await runDunningRetries(jobCtx as never, farFuture);
+  const stillDue = await prisma.invoice.findMany({
+    where: { id: dunnedInvoiceId, status: "OPEN", nextRetryAt: { lte: farFuture } },
+    select: { id: true },
+  });
+  check("a paid invoice is never retried again, however far time moves", stillDue.length === 0, stillDue);
+
+  // -- notice before a price rise -------------------------------------------
+  const noticePlan = await call("POST", "/v1/plans", {
+    headers: asKey(),
+    payload: { code: "noticed", name: "Noticed" },
+  });
+  const noticePrice = await call("POST", "/v1/prices", {
+    headers: asKey(),
+    payload: { planId: "noticed", code: "noticed_monthly_ngn", currency: "NGN", unitAmount: 600_000, interval: "MONTHLY" },
+  });
+  const noticeEmail = `notice-${stamp}@example.test`;
+  const noticeSub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `notice-${stamp}` }),
+    payload: {
+      customer: { externalId: `notice_${stamp}`, email: noticeEmail, name: "Zainab Bello" },
+      priceId: noticePrice.body.data.id,
+    },
+  });
+  await call("POST", `/mock/checkout/${noticeSub.body.data.payment.reference}/complete`, {
+    payload: { outcome: "SUCCESS" },
+  });
+  check("a subscriber exists to be warned", noticePlan.status === 201 && noticeSub.status === 201, noticeSub.body);
+
+  await runNotifications(mailCtx as never);
+  check("nothing is sent while the price has not changed", (await outbox("price_change", noticeEmail)).length === 0);
+
+  const raised = await call("PATCH", `/v1/prices/${noticePrice.body.data.id}`, {
+    headers: asKey(),
+    payload: { unitAmount: 900_000 },
+  });
+  check("the price is raised", raised.body.data?.version === 2, raised.body);
+
+  // The renewal is a month out, so nothing should go yet.
+  await runNotifications(mailCtx as never);
+  check("no notice goes out a month early", (await outbox("price_change", noticeEmail)).length === 0);
+
+  // Bring the renewal inside the notice window the organization configured.
+  const noticeSubId = noticeSub.body.data.subscription.id;
+  await prisma.subscription.update({
+    where: { id: noticeSubId },
+    data: { currentPeriodEnd: new Date(Date.now() + 3 * 86_400_000) },
+  });
+  await runNotifications(mailCtx as never);
+
+  const noticeMail = await outbox("price_change", noticeEmail);
+  check("the customer is warned before the new price applies", noticeMail.length === 1, noticeMail.map((m) => m.subject));
+  const noticeBody = lastMailTo(noticeEmail)?.text ?? "";
+  check("the notice names the old price", noticeBody.includes("₦6,000.00"), noticeBody);
+  check("the notice names the new price", noticeBody.includes("₦9,000.00"), noticeBody);
+  check("the notice says the current period is unaffected", noticeBody.includes("current period is unaffected"));
+  check("the notice offers the way out that keeps it from being a chargeback", noticeBody.includes("cancel before that date"));
+
+  await runNotifications(mailCtx as never);
+  check("the warning is sent once, not on every run", (await outbox("price_change", noticeEmail)).length === 1);
+
+  // -- notice before a trial converts ---------------------------------------
+  const trialNoticeEmail = `trialnotice-${stamp}@example.test`;
+  const trialNotice = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `trialnotice-${stamp}` }),
+    payload: {
+      customer: { externalId: `trialnotice_${stamp}`, email: trialNoticeEmail, name: "Tunde Ade" },
+      priceId: "trialled_monthly_ngn",
+    },
+  });
+  check("a trialing subscriber exists", trialNotice.body.data?.subscription?.status === "TRIALING", trialNotice.body);
+
+  await runNotifications(mailCtx as never);
+  check("nothing is sent while the trial has weeks to run", (await outbox("trial_ending", trialNoticeEmail)).length === 0);
+
+  await prisma.subscription.update({
+    where: { id: trialNotice.body.data.subscription.id },
+    data: { trialEnd: new Date(Date.now() + 2 * 86_400_000) },
+  });
+  await runNotifications(mailCtx as never);
+  const trialMail = await outbox("trial_ending", trialNoticeEmail);
+  check("the customer is warned before the trial becomes a charge", trialMail.length === 1, trialMail.map((m) => m.subject));
+  check(
+    "and told there is no card on file rather than promised a charge",
+    (lastMailTo(trialNoticeEmail)?.text ?? "").includes("no payment method on file"),
+    lastMailTo(trialNoticeEmail)?.text
+  );
+
+  // -- an organization that has switched email off --------------------------
+  await call("PUT", "/v1/billing-settings", {
+    headers: asKey(),
+    payload: { notificationsEnabled: false },
+  });
+  const quietEmail = `quiet-${stamp}@example.test`;
+  const quiet = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `quiet-${stamp}` }),
+    payload: {
+      customer: { externalId: `quiet_${stamp}`, email: quietEmail, name: "Quiet" },
+      priceId: "pro_monthly_ngn",
+      metadata: { mockOutcome: "SUCCESS" },
+    },
+  });
+  await call("POST", `/mock/checkout/${quiet.body.data.payment.reference}/complete`, {
+    payload: { outcome: "SUCCESS" },
+  });
+  await call("POST", `/v1/subscriptions/${quiet.body.data.subscription.id}/renew`, {
+    headers: asKey(),
+    payload: { metadata: { mockOutcome: "FAILED" } },
+  });
+
+  await runNotifications(mailCtx as never);
+  const quietMail = await outbox("payment_failed", quietEmail);
+  check("email off means nothing is delivered", mailbox.sent.every((m) => m.to !== quietEmail));
+  check("but the decision is still recorded rather than lost", quietMail.length === 1, quietMail);
+  check("and recorded honestly as suppressed, not as sent", quietMail[0]?.status === "SUPPRESSED", quietMail[0]?.status);
+
+  await call("PUT", "/v1/billing-settings", {
+    headers: asKey(),
+    payload: { notificationsEnabled: true },
+  });
 
   // -- 13. Webhooks ----------------------------------------------------------
   section("13. Webhook verification and de-duplication");

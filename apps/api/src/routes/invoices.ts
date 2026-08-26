@@ -149,6 +149,38 @@ export function registerInvoiceRoutes(
   });
 
   /** Paginated list. `q` matches the provider reference or the failure code. */
+  /**
+   * What the platform has told this organization's customers.
+   *
+   * Read-only and deliberately complete: a suppressed or failed message is as
+   * important to see as a delivered one, because "the customer says they were
+   * never told" is a question this table has to be able to answer.
+   */
+  app.get("/v1/emails", async (request) => {
+    const organizationId = requireOrganization(request);
+    const query = request.query as Record<string, unknown> & { type?: string; status?: string };
+    const page = parsePageQuery(query, { defaultLimit: 25 });
+
+    const where = {
+      organizationId,
+      ...(query.type ? { type: query.type } : {}),
+      ...(query.status ? { status: query.status as never } : {}),
+      ...(page.q ? { toEmail: { contains: page.q, mode: "insensitive" as const } } : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.emailMessage.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: page.limit,
+        skip: page.skip,
+      }),
+      prisma.emailMessage.count({ where }),
+    ]);
+
+    return success(paginated(items, page, total), request.requestId);
+  });
+
   app.get("/v1/payment-attempts", async (request) => {
     const organizationId = requireOrganization(request);
     const query = request.query as Record<string, unknown> & { invoiceId?: string; customerId?: string };

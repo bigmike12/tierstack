@@ -19,9 +19,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
             Your billing logic, defined once.
           </h2>
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-            Plans, subscriptions, invoices, entitlements and payment recovery live here — not inside a
-            payment provider. Paystack, Monnify and Flutterwave are rails underneath, and swapping one
-            costs you no history.
+            Plans, subscriptions, invoices, entitlements and payment recovery — with Paystack, Monnify
+            and Flutterwave as rails underneath.
           </p>
           <dl className="mt-10 space-y-4 text-sm">
             {[

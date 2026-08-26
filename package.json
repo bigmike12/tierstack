@@ -2,7 +2,7 @@
   "name": "tierstack",
   "private": true,
   "version": "0.1.0",
-  "description": "Tierstack — provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
+  "description": "Tierstack \u2014 provider-agnostic B2B billing, subscription, entitlement and payment-orchestration infrastructure.",
   "workspaces": [
     "packages/*",
     "packages/payments/*",
@@ -26,6 +26,7 @@
     "db:reset": "node scripts/infra.mjs && prisma migrate reset --force --schema prisma/schema.prisma",
     "db:seed": "node scripts/infra.mjs && tsx prisma/seed.ts",
     "demo:data": "node scripts/infra.mjs && tsx scripts/demo-data.ts",
+    "dunning:data": "node scripts/infra.mjs && tsx scripts/dunning-data.ts",
     "e2e": "node scripts/infra.mjs && tsx scripts/e2e.ts",
     "dev:usage-worker": "turbo run dev --filter=@tierstack/usage-worker",
     "up": "node scripts/infra.mjs",
@@ -36,7 +37,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^22.10.2",
     "prisma": "^6.2.1",
     "tsx": "^4.19.2",
     "turbo": "^2.3.3",

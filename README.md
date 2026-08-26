@@ -42,17 +42,20 @@ against a real database.
 | Dashboard: auth, section-57 navigation, and every page with an API behind it | Complete |
 | Paginated, searchable list endpoints and dashboard tables | Complete |
 | Plan and price creation, editing and archiving from the dashboard | Complete |
-| Paystack adapter: checkout, verification, recurring charge, refunds, payment pages, signed webhooks | Implemented; **not yet exercised against live Paystack** |
+| Paystack adapter: checkout, verification, recurring charge, refunds, payment pages, signed webhooks | Verified end to end against live Paystack, including an unattended renewal on a stored card |
+| Price versioning: an edit that would reprice live subscribers publishes a new version instead | Complete |
+| Automated dunning: the retry ladder runs on the developer's own schedule | Complete |
+| Transactional email: failed payments, recovery, price-change and trial-ending notices | Complete (Resend, or a log transport when no key is set) |
 
 **Deliberately not built yet** — and, importantly, not faked:
 
 | Area | Behaviour today |
 | --- | --- |
 | Monnify / Flutterwave adapters | A configuration can be stored, but instantiating the adapter returns `NOT_IMPLEMENTED` and its capabilities report as `null`. |
-| Paystack against the real API | The adapter is written and unit-tested against a recorded transport. It has **not** been run against api.paystack.co — that needs a test-mode secret key and a live transaction, which this build has never had. Treat the first real checkout as the verification step. |
 | Paystack direct debit | Mandate creation is not implemented, so the adapter reports `directDebit: false` and the engine never routes to it. |
-| Automated dunning retries (phase 4) | Grace periods open and close on the developer's configured policy; the *scheduled* retry ladder is not yet wired. Retry today is `POST /v1/invoices/:id/pay`. |
-| Customer portal, TypeScript/React SDKs, `/llms.txt` (phase 5) | Not present. The API they would sit on is. |
+| A declined stored-card charge on live Paystack | The mock declines on demand and the ladder is covered end to end against it. Paystack's own decline codes have never been mapped through the adapter — the unhappy half of dunning is unproven on the real rail. |
+| Per-merchant email credentials | One platform Resend key sends for every organization today, with per-org sender name and reply-to. Each merchant sending from their own verified domain is not built. |
+| Customer portal, TypeScript/React SDKs, `/llms.txt` (phase 5) | Not present. The API they would sit on is. A dunning email's pay link goes to a hosted checkout because there is no portal for it to land on yet. |
 | Coupons, referrals, credit ledger (phase 6) | Schema exists; no engine. |
 
 Any capability a provider does not have returns `UNSUPPORTED_PROVIDER_CAPABILITY`.
@@ -96,7 +99,7 @@ undecryptable.
 `npm run dev` starts all three. To run them separately: `npm run dev:api`,
 `npm run dev:dashboard`, `npm run dev:worker`.
 
-The seed prints dashboard credentials — sign in at <http://localhost:8181>.
+The seed prints dashboard credentials — sign in at <http://localhost:3000>.
 
 `npm run db:seed` also prints a `sk_test_...` key once. Then:
 
@@ -144,7 +147,7 @@ reads as "no data yet".
 | Subscriptions | Filterable list; detail shows billing, customer, invoices and the full transition history |
 | Invoices | Filterable list; detail shows line items, totals and every payment attempt |
 | Payments | Every attempt in order, with failure codes |
-| Dunning | Your configured policy, who is in a grace period, and what happens when it ends |
+| Dunning | Your configured policy, who is in a grace period, where each open invoice is on the retry ladder, and every email a customer was sent |
 | Payment Providers | Configure and test rails; capabilities come from the adapter itself |
 | API Keys | Create (shown once), list, revoke |
 | Webhooks | Endpoint URLs and the received-event log with signature status |
@@ -438,17 +441,17 @@ tierstack/
 
 ## Next steps
 
-The build order continues at step 11. Recommended order, which deviates from the
-spec in one place:
+Recommended order:
 
-1. **Verify Paystack against the real API.** Put a test-mode secret key into
-   the dashboard, run one checkout end to end, and point a Paystack test webhook
-   at `/webhooks/paystack`. Everything below waits on what that turns up —
-   recorded fixtures are not evidence that a live integration works.
-2. **Step 11 — the scheduled retry ladder.** Dunning only earns its keep once
-   real payments fail, so it is worth doing after a real rail is proven.
-3. **Steps 16–20** — the customer portal, the SDKs, coupons and referrals.
+1. **Watch a real Paystack decline.** Subscribe with one of Paystack's failing
+   test cards and check what `nextRetryAt` and `failureReason` end up holding.
+   The ladder's happy path is proven on the real rail; its unhappy half is not.
+2. **The customer portal.** Every dunning email now needs somewhere to send
+   people, and `PortalSession` is already in the schema.
+3. **Coupons.** The tables, the `COUPON` line type and negative-line arithmetic
+   already exist, so it is the cheapest growth feature to finish.
+4. **SDKs and `/llms.txt`**, then a second real provider — "provider-agnostic"
+   is untested until the router has failed over between two live rails.
 
-Not in the specification but needed before launch: transactional email (dunning
-that cannot tell a customer their card failed is decorative), a platform
-back-office for Tierstack itself, and an NDPR/PCI scope review.
+Also needed before launch: a platform back-office for Tierstack itself, and an
+NDPR/PCI scope review.

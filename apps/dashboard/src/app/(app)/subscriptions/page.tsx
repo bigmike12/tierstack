@@ -35,7 +35,7 @@ export default async function SubscriptionsPage({
     <>
       <PageHeader
         title="Subscriptions"
-        description="Status only ever changes through the state machine, and every change is recorded with its reason."
+        description="Every status change is recorded with its reason."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4">

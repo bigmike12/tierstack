@@ -19,6 +19,12 @@ const updateSchema = z
     incompleteExpiryHours: z.number().int().min(0).max(24 * 30).optional(),
     defaultCurrency: z.string().length(3).optional(),
     autoCollect: z.boolean().optional(),
+    /** Off still records what would have been sent, so the gap is visible. */
+    notificationsEnabled: z.boolean().optional(),
+    priceChangeNoticeDays: z.number().int().min(0).max(90).optional(),
+    trialEndingNoticeDays: z.number().int().min(0).max(90).optional(),
+    supportEmail: z.string().email().nullable().optional(),
+    senderName: z.string().max(120).nullable().optional(),
   })
   .strict();
 

@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/ui/shell";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import type { ProviderConfig } from "@/lib/types";
-import { ProviderEditor, ProviderForm, TestButton } from "./form";
+import { ProviderForm, TestButton } from "./form";
 
 export const metadata: Metadata = { title: "Payment Providers" };
 
@@ -26,7 +26,7 @@ export default async function ProvidersPage() {
     <>
       <PageHeader
         title="Payment providers"
-        description="Rails, not the source of truth. Credentials are sealed with AES-256-GCM and bound to this organization before they reach the database — a ciphertext copied into another tenant's row will not decrypt."
+        description="Credentials are encrypted before storage and never returned by the API."
       />
 
       <div className="grid gap-4 xl:grid-cols-3">
@@ -36,8 +36,7 @@ export default async function ProvidersPage() {
               <CardHeader>
                 <CardTitle>No provider configured</CardTitle>
                 <CardDescription>
-                  Add the mock rail to run the whole billing lifecycle locally with no credentials at all,
-                  or Paystack with a test secret key.
+                  Add the mock rail to run the whole lifecycle locally, or Paystack with a test secret key.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -81,7 +80,6 @@ export default async function ProvidersPage() {
                         halfway through a charge.
                       </p>
                     )}
-                    <ProviderEditor config={config} />
                   </CardContent>
                 </Card>
               );

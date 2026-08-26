@@ -17,7 +17,7 @@ export default async function ApiKeysPage() {
     <>
       <PageHeader
         title="API keys"
-        description="Only a SHA-256 hash and a short display prefix are stored. A key is shown once at creation and is unrecoverable afterwards — lose it and you revoke it, you do not look it up."
+        description="A key is shown once, when you create it. Lose it and you revoke it — it cannot be looked up."
       />
 
       <div className="grid gap-4 xl:grid-cols-3">

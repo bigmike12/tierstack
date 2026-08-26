@@ -29,9 +29,8 @@ export default async function SettingsPage() {
           <CardHeader>
             <CardTitle>Billing policy</CardTitle>
             <CardDescription>
-              The engine has no built-in grace period or retry schedule. Whatever you set here is what it
-              executes — and the values in force are frozen onto a subscription the moment a payment fails,
-              so editing them never changes a recovery already under way.
+              How recovery behaves when a payment fails. Changes apply to the next failure; a grace period
+              already running keeps the length and outcome it started with.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -60,8 +59,7 @@ export default async function SettingsPage() {
             <CardHeader>
               <CardTitle>Branding</CardTitle>
               <CardDescription>
-                The display name, URLs and email sender are read from configuration rather than written
-                into the engine, so a white-label deployment is an environment change.
+                Read from configuration, so a rebrand or a second domain is an environment change.
               </CardDescription>
             </CardHeader>
             <CardContent>

@@ -26,7 +26,7 @@ export default async function CustomersPage({
     <>
       <PageHeader
         title="Customers"
-        description="Your application stays the source of truth for identity. The external id is the join key back to it — most integrations never touch the platform id at all."
+        description="Your own user id is the join key back to your app — most integrations never use the platform id."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4">

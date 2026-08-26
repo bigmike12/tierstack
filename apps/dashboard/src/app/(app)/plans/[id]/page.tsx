@@ -87,8 +87,7 @@ export default async function PlanDetailPage({
         <CardHeader>
           <CardTitle>Prices</CardTitle>
           <CardDescription>
-            One plan, several prices: a second currency, an annual option, or a metered variant all live here
-            rather than as duplicate plans.
+            A second currency, an annual option or a metered variant all live here.
           </CardDescription>
         </CardHeader>
         <CardContent className="px-0 pb-0">
@@ -179,10 +178,9 @@ export default async function PlanDetailPage({
             </Table>
           )}
           <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
-            Archiving a price hides it from new signups; everyone already on it keeps paying it. Prices are
-            never deleted, because invoices already issued point at them. Editing one that has live
-            subscriptions publishes a new version; nobody is repriced mid-period, and each subscriber moves
-            to the new amount at their next renewal unless their subscription is pinned.
+            Archiving hides a price from new signups; everyone already on it keeps paying it. Editing one
+            with live subscriptions publishes a new version, and they move to it at their next renewal
+            unless pinned.
           </p>
         </CardContent>
       </Card>

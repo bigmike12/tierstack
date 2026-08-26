@@ -179,9 +179,6 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           ) : (
             <p className="px-5 pb-5 text-sm text-muted-foreground">No payment has been attempted.</p>
           )}
-          <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
-            Attempts are append-only. A retry adds a row; it never overwrites the one before it.
-          </p>
         </CardContent>
       </Card>
     </>
