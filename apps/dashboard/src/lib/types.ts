@@ -77,6 +77,9 @@ export interface Price {
   intervalCount: number;
   trialDays: number | null;
   active: boolean;
+  /** Position in a code lineage; 1 unless the price has been superseded. */
+  version?: number;
+  supersedesPriceId?: string | null;
   /** Set on USAGE_METERED and HYBRID prices only. */
   usageMeterId?: string | null;
   usageUnitAmount?: number | null;
@@ -109,6 +112,8 @@ export interface Subscription {
   gracePolicy: { gracePeriodDays?: number; failureAction?: string; accessDuringGracePeriod?: string } | null;
   createdAt: string;
   price: Price & { plan: Plan };
+  /** Held on its current price while others roll forward at renewal. */
+  pricePinned?: boolean;
   customer?: { id: string; externalId: string | null; email: string; name: string | null };
   paymentMethod?: PaymentMethod | null;
 }

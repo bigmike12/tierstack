@@ -37,6 +37,8 @@ const KEY = flag("key") ?? process.env.TIERSTACK_API_KEY ?? "";
 const EMAIL = flag("email") ?? `paystack-test-${Date.now()}@gmail.com`;
 const EXTERNAL_ID = `user_paystack_${Date.now()}`;
 const RUN_RENEWAL_CHECK = hasFlag("renew");
+const apiHost = new URL(API).hostname;
+const isLocalApi = ["localhost", "127.0.0.1", "::1"].includes(apiHost);
 
 let passed = 0;
 let failed = 0;
@@ -107,6 +109,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // This script creates a checkout and may charge a stored authorization. Keep
+  // it confined to the seeded local test environment even when flags or .env
+  // values are accidentally copied from production.
+  if (!isLocalApi) {
+    console.error(`Refusing to verify against non-local API host: ${apiHost}`);
+    process.exit(1);
+  }
+
+  if (!KEY.startsWith("sk_test_")) {
+    console.error("Refusing to use a non-test Tierstack API key.");
+    process.exit(1);
+  }
+
   // -- 1. Is anything listening -----------------------------------------------
 
   section("1. The API");
@@ -137,6 +152,11 @@ async function main(): Promise<void> {
       "\nAdd it in the dashboard under Payment Providers, with `secretKey=sk_test_...`\n" +
         "in the credentials box.\n"
     );
+    process.exit(1);
+  }
+
+  if (!check("Paystack is configured in TEST mode", paystack.environment === "TEST", paystack.environment)) {
+    console.error("Refusing to run a checkout against a LIVE Paystack configuration.\n");
     process.exit(1);
   }
 

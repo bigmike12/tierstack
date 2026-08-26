@@ -13,7 +13,10 @@ import { PaystackPaymentProvider } from "./provider";
  * and a test-mode transaction, and has not been run.
  */
 
-const SECRET = process.env.TEST_SECRET_KEY || "";
+// The adapter only requires a non-empty key at construction time. This is a
+// recorded-transport suite, so it must use a deterministic dummy test key and
+// never depend on a developer's local Paystack credentials.
+const SECRET = "sk_test_recorded_transport";
 
 class StubTransport implements PaystackTransport {
   readonly calls: { method: string; path: string; body?: unknown }[] = [];

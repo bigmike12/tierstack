@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@tierstack/database";
-import { intervalFromRequest, notifyEntitlementChange } from "@tierstack/billing";
+import { intervalFromRequest, notifyEntitlementChange, updatePrice } from "@tierstack/billing";
 import { BillingError, assertCurrency, newId, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -146,7 +146,10 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     const { planId } = request.params as { planId: string };
     const plan = await prisma.plan.findFirst({
       where: { organizationId, OR: [{ id: planId }, { code: planId }] },
-      include: { prices: true },
+      // Archived versions are included deliberately: the plan page shows the
+      // lineage. Ordering is fixed so publishing a new version does not
+      // reshuffle the table under you.
+      include: { prices: { orderBy: { createdAt: "asc" } } },
     });
     if (!plan) throw BillingError.notFound("PLAN_NOT_FOUND", "Plan");
     return success(plan, request.requestId);
@@ -266,6 +269,15 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     return success(price, request.requestId);
   });
 
+  /**
+   * Edit a price.
+   *
+   * Presentation, the active flag and the trial length always save in place, and
+   * so does an amount, an interval or a metering change — while nobody is bound
+   * to the row. Once there are live subscriptions the same request publishes a
+   * new version and archives this one, so the people who already signed up keep
+   * paying what they agreed to until an explicit plan change moves them.
+   */
   app.patch("/v1/prices/:priceId", async (request) => {
     const organizationId = requireOrganization(request);
     requireRole(request, "ADMIN");
@@ -312,15 +324,27 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     }
 
     const interval = body.interval ? intervalFromRequest(body.interval, body.intervalDays) : undefined;
-    const { interval: _interval, intervalDays: _intervalDays, usageMeterCode: _usageMeterCode, ...data } = body;
-    const updated = await prisma.price.update({
-      where: { id: price.id },
-      data: {
-        ...data,
-        ...(body.currency ? { currency: assertCurrency(body.currency) } : {}),
-        ...(interval ?? {}),
-        ...(usageMeterId === undefined ? {} : { usageMeterId }),
-      } as never,
+
+    // The write itself decides, from the data, whether this is an in-place edit
+    // or a new version — see updatePrice. Making that call here would mean the
+    // rule protecting existing subscribers lived in one of several callers
+    // rather than in the one place that owns the price row.
+    const result = await updatePrice(prisma, {
+      organizationId,
+      priceId: price.id,
+      nickname: body.nickname,
+      active: body.active,
+      trialDays: body.trialDays,
+      metadata: body.metadata,
+      model: body.model,
+      currency: body.currency ? assertCurrency(body.currency) : undefined,
+      unitAmount: body.unitAmount,
+      intervalUnit: interval?.intervalUnit,
+      intervalCount: interval?.intervalCount,
+      usageMeterId,
+      usageUnitAmount: body.usageUnitAmount,
+      usageUnitSize: body.usageUnitSize,
+      includedUnits: body.includedUnits,
     });
 
     await notifyEntitlementChange(organizationId, null);
@@ -328,12 +352,26 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
       organizationId,
       actorType: actor.kind,
       userId: actor.kind === "USER" ? actor.userId : null,
-      action: "price.updated",
+      action: result.supersededPriceId ? "price.superseded" : "price.updated",
       resource: "price",
-      resourceId: price.id,
-      metadata: { code: price.code, changed: Object.keys(body) },
+      resourceId: result.price.id,
+      metadata: {
+        code: result.price.code,
+        changed: result.changed,
+        supersededPriceId: result.supersededPriceId,
+        subscribersRetained: result.subscribersRetained,
+      },
       ipAddress: request.ip,
     });
-    return success(updated, request.requestId);
+
+    return success(
+      {
+        ...result.price,
+        supersededPriceId: result.supersededPriceId,
+        changed: result.changed,
+        subscribersRetained: result.subscribersRetained,
+      },
+      request.requestId
+    );
   });
 }

@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { cancelSubscription, resumeSubscription } from "@/actions/billing";
+import { cancelSubscription, resumeSubscription, setPricePinned } from "@/actions/billing";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DescriptionList, Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
@@ -116,8 +116,29 @@ export default async function SubscriptionPage({ params }: { params: Promise<{ i
                     ? `${subscription.paymentMethod.brand?.toUpperCase() ?? subscription.paymentMethod.type} •••• ${subscription.paymentMethod.last4 ?? "????"}`
                     : "None stored",
                 },
+                {
+                  label: "Price changes",
+                  value: subscription.pricePinned
+                    ? "Pinned — stays on this price"
+                    : "Follows the current version",
+                },
               ]}
             />
+
+            <div className="mt-5 flex items-start gap-3 border-t border-border pt-4">
+              <form action={setPricePinned}>
+                <input type="hidden" name="subscriptionId" value={subscription.id} />
+                <input type="hidden" name="pinned" value={subscription.pricePinned ? "false" : "true"} />
+                <Button type="submit" variant="outline" size="sm">
+                  {subscription.pricePinned ? "Follow price changes" : "Pin to this price"}
+                </Button>
+              </form>
+              <p className="text-xs text-muted-foreground">
+                {subscription.pricePinned
+                  ? "This subscription ignores newer versions of its price. Releasing it means the next renewal catches up to whatever the price is by then."
+                  : "If this price is edited, this subscription moves to the new amount at its next renewal — never mid-period. Pin it to hold this customer on what they signed up for."}
+              </p>
+            </div>
           </CardContent>
         </Card>
 

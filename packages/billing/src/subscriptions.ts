@@ -22,6 +22,7 @@ import {
   type ComputedLine,
   type PriceSnapshot,
 } from "./pricing";
+import { canRollForward, resolveCurrentPrice } from "./prices";
 import { loadBillingSettings, loadDunningPolicy } from "./settings";
 import { applyTransition, recordInitialStatus } from "./transitions";
 import type { SubscriptionStatus } from "./state-machine";
@@ -232,24 +233,54 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       return { renewed: false as const, invoiceId: null };
     }
 
-    const snapshot = toPriceSnapshot(subscription.price);
+    // A price whose economics were edited while this subscription was live was
+    // superseded rather than rewritten, and the subscription still points at
+    // the version it signed up on. Renewal is where it catches up: the period
+    // just ending was already invoiced at the old amount, so the new one takes
+    // effect from here, which is what a customer means by "from next month".
+    //
+    // Two things hold a subscription back. `pricePinned` is the deliberate one,
+    // for a customer promised the price they signed up on. The other is an
+    // interval change, which is too large a surprise to apply without asking —
+    // see canRollForward.
+    let billingPrice = subscription.price;
+    let rolledForwardFrom: string | null = null;
+
+    if (!subscription.pricePinned) {
+      const current = await resolveCurrentPrice<typeof subscription.price>(
+        tx as never,
+        subscription.priceId,
+        { plan: true, usageMeter: true }
+      );
+      if (current && canRollForward(subscription.price, current)) {
+        billingPrice = current;
+        rolledForwardFrom = subscription.priceId;
+      }
+    }
+
+    const snapshot = toPriceSnapshot(billingPrice);
     assertBillablePriceModel(snapshot);
 
     const settings = await loadBillingSettings(tx, subscription.organizationId);
-    const currency = assertCurrency(subscription.price.currency);
+    const currency = assertCurrency(billingPrice.currency);
     const periodStart = subscription.currentPeriodEnd;
-    const periodEnd = addInterval(
-      periodStart,
-      priceInterval(snapshot),
-      subscription.billingAnchorDay ?? undefined
-    );
+
+    // A trial ends on the day it ends, not on the day the customer signed up.
+    // The anchor is re-taken here so the first paid period is a whole period:
+    // sign up on the 1st with a 10-day trial and billing settles on the 11th,
+    // rather than snapping back to the 1st and charging a full month for 20
+    // days of service.
+    const anchorDay =
+      status === "TRIALING" ? periodStart.getUTCDate() : (subscription.billingAnchorDay ?? undefined);
+
+    const periodEnd = addInterval(periodStart, priceInterval(snapshot), anchorDay);
 
     const lines = buildRecurringLines({
       price: snapshot,
       quantity: subscription.quantity,
       periodStart,
       periodEnd,
-      planName: subscription.price.plan.name,
+      planName: billingPrice.plan.name,
     });
 
     // Consumption for the period that just closed, billed in arrears. The base
@@ -303,15 +334,48 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
 
     await tx.subscription.update({
       where: { id: subscription.id },
-      data: { currentPeriodStart: periodStart, currentPeriodEnd: periodEnd },
+      data: {
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: periodEnd,
+        ...(status === "TRIALING" && anchorDay !== undefined ? { billingAnchorDay: anchorDay } : {}),
+        // Repoint rather than re-resolve on every renewal: the subscription now
+        // genuinely is on the new version, and a support question about why the
+        // bill changed is answerable from the row itself.
+        ...(rolledForwardFrom ? { priceId: billingPrice.id } : {}),
+      },
     });
 
-    // A trial that reaches its end owes money for the first real period.
-    if (status === "TRIALING" && finalized.status !== "PAID") {
+    // A trial that reaches its end owes money for the first real period — but
+    // only a trial with nothing to charge has *lapsed*. When there is a stored
+    // card, the subscription stays TRIALING until the charge is attempted, and
+    // the result of that charge decides: TRIALING -> ACTIVE if it settles,
+    // TRIALING -> PAST_DUE -> GRACE_PERIOD if it does not. Marking it PAST_DUE
+    // here would put every converting customer through a past-due state they
+    // were never in, and fire the dunning that goes with it.
+    const collectable =
+      subscription.paymentMethodId !== null ||
+      (await tx.paymentMethod.count({
+        where: {
+          organizationId: subscription.organizationId,
+          customerId: subscription.customerId,
+          status: "ACTIVE",
+        },
+      })) > 0;
+
+    if (status === "TRIALING" && !collectable) {
       await applyTransition(tx, subscription.id, status, "PAST_DUE", "trial_ended");
     }
 
-    return { renewed: true as const, invoiceId: finalized.id, amountDue: finalized.amountDue };
+    return {
+      renewed: true as const,
+      invoiceId: finalized.id,
+      amountDue: finalized.amountDue,
+      /** What the subscription was before this period opened. */
+      previousStatus: status,
+      /** Set when this renewal moved the subscription onto a newer price. */
+      rolledForwardFrom,
+      priceId: billingPrice.id,
+    };
   });
 }
 

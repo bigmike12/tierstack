@@ -1,4 +1,5 @@
 import {
+  applyTransition,
   attemptInvoicePayment,
   expireGracePeriods,
   expireIncompleteSubscriptions,
@@ -55,6 +56,26 @@ export async function runRenewals(ctx: JobContext, now = new Date(), batchSize =
             subscriptionId: subscription.id,
             reason: error instanceof BillingError ? error.code : "unknown",
           });
+
+          // A trial is left in TRIALING through its final renewal so that a
+          // converting customer never passes through PAST_DUE. If the charge
+          // could not even be attempted — every rail down, say — that leaves
+          // the trial holding live entitlements with its period already
+          // advanced, and nothing would select it again. Close it here.
+          if (result.previousStatus === "TRIALING") {
+            await applyTransition(
+              ctx.prisma,
+              subscription.id,
+              "TRIALING",
+              "PAST_DUE",
+              "trial_ended_uncollected"
+            ).catch((transitionError: unknown) => {
+              ctx.log("could not close an uncollected trial", {
+                subscriptionId: subscription.id,
+                reason: transitionError instanceof Error ? transitionError.message : "unknown",
+              });
+            });
+          }
         }
       }
     } catch (error) {
