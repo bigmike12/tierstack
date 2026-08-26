@@ -679,6 +679,17 @@ async function main(): Promise<void> {
   // -- 12e. Editing a price ---------------------------------------------------
   section("12e. Editing a price");
 
+  // A subscription only renews once its first payment has settled — INCOMPLETE
+  // means nothing has ever been collected. This walks the mock checkout the way
+  // a customer would, so the renewals below have something real to renew.
+  async function settle(created: Json): Promise<void> {
+    const payment = created.body?.data?.payment;
+    if (!payment?.checkoutUrl) return;
+    await call("POST", `/mock/checkout/${payment.reference}/complete`, {
+      payload: { outcome: "SUCCESS" },
+    });
+  }
+
   const editablePlan = await call("POST", "/v1/plans", {
     headers: asKey(),
     payload: { code: "editable", name: "Editable" },
@@ -721,6 +732,7 @@ async function main(): Promise<void> {
     payload: { customerId: editCustomer.body.data.id, priceId: editable.body.data.id },
   });
   check("a customer subscribes to it", editSubscription.status === 201, editSubscription.body);
+  await settle(editSubscription);
 
   const superseded = await call("PATCH", `/v1/prices/${editable.body.data.id}`, {
     headers: asKey(),
@@ -740,15 +752,125 @@ async function main(): Promise<void> {
   check("the previous version is archived", oldPrice.body.data?.active === false);
   check("the previous version's code is suffixed", oldPrice.body.data?.code === "editable_monthly_ngn-v1");
 
-  const stillOnOld = await call("GET", `/v1/subscriptions/${editSubscription.body.data.subscription.id}`, {
+  const editSubscriptionId = editSubscription.body.data.subscription.id;
+  const stillOnOld = await call("GET", `/v1/subscriptions/${editSubscriptionId}`, {
     headers: asKey(),
   });
   check(
-    "the existing subscriber was not repriced",
+    "the current period is not repriced under the subscriber",
     stillOnOld.body.data?.price?.id === editable.body.data.id,
     stillOnOld.body.data?.price
   );
-  check("the existing subscriber still pays the old amount", stillOnOld.body.data?.price?.unitAmount === 750_000);
+  check("they still pay the old amount for the period they are in", stillOnOld.body.data?.price?.unitAmount === 750_000);
+  check("that period was already invoiced at the old amount", stillOnOld.body.data?.price?.unitAmount === 750_000);
+
+  // The point of versioning is not that subscribers never move — it is that
+  // they move at a renewal boundary rather than mid-period.
+  const rolled = await call("POST", `/v1/subscriptions/${editSubscriptionId}/renew`, {
+    headers: asKey(),
+    payload: {},
+  });
+  check("the next renewal rolls them onto the new version", rolled.body.data?.subscription?.price?.id === superseded.body.data.id, rolled.body.data?.subscription?.price);
+  check("and charges the new amount", rolled.body.data?.amountDue === 900_000, rolled.body.data);
+  check(
+    "the subscription now genuinely points at the new version",
+    rolled.body.data?.subscription?.price?.unitAmount === 900_000
+  );
+
+  // -- pinning ---------------------------------------------------------------
+  const pinnedCustomer = await call("POST", "/v1/customers", {
+    headers: asKey(),
+    payload: { externalId: `pinned_${stamp}`, email: `pinned-${stamp}@example.test`, name: "Pinned" },
+  });
+  const pinnedSub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `pinned-sub-${stamp}` }),
+    payload: { customerId: pinnedCustomer.body.data.id, priceId: superseded.body.data.id },
+  });
+  const pinnedSubId = pinnedSub.body.data?.subscription?.id;
+  check("a second subscriber joins on the current version", pinnedSub.status === 201, pinnedSub.body);
+  await settle(pinnedSub);
+
+  const pinResult = await call("POST", `/v1/subscriptions/${pinnedSubId}/pin-price`, {
+    headers: asKey(),
+    payload: { pinned: true },
+  });
+  check("a subscription can be pinned to its price", pinResult.body.data?.pricePinned === true, pinResult.body);
+
+  const supersededAgain = await call("PATCH", `/v1/prices/${superseded.body.data.id}`, {
+    headers: asKey(),
+    payload: { unitAmount: 1_200_000 },
+  });
+  check("a third version can be published", supersededAgain.body.data?.version === 3, supersededAgain.body);
+
+  const pinnedRenewal = await call("POST", `/v1/subscriptions/${pinnedSubId}/renew`, {
+    headers: asKey(),
+    payload: {},
+  });
+  check(
+    "a pinned subscription does not roll forward",
+    pinnedRenewal.body.data?.subscription?.price?.id === superseded.body.data.id,
+    pinnedRenewal.body.data?.subscription?.price
+  );
+  check("a pinned subscription keeps its old amount", pinnedRenewal.body.data?.amountDue === 900_000, pinnedRenewal.body.data);
+
+  const unpinned = await call("POST", `/v1/subscriptions/${pinnedSubId}/pin-price`, {
+    headers: asKey(),
+    payload: { pinned: false },
+  });
+  check("a pin can be released", unpinned.body.data?.pricePinned === false, unpinned.body);
+
+  const afterUnpin = await call("POST", `/v1/subscriptions/${pinnedSubId}/renew`, {
+    headers: asKey(),
+    payload: {},
+  });
+  check("releasing the pin lets the next renewal catch up", afterUnpin.body.data?.amountDue === 1_200_000, afterUnpin.body.data);
+  check(
+    "catching up crosses every version it missed in one hop",
+    afterUnpin.body.data?.subscription?.price?.id === supersededAgain.body.data.id
+  );
+
+  // -- an interval change is not something a price edit may do silently ------
+  const intervalPlan = await call("POST", "/v1/plans", {
+    headers: asKey(),
+    payload: { code: "intervalled", name: "Intervalled" },
+  });
+  const intervalPrice = await call("POST", "/v1/prices", {
+    headers: asKey(),
+    payload: {
+      planId: "intervalled",
+      code: "intervalled_monthly_ngn",
+      currency: "NGN",
+      unitAmount: 300_000,
+      interval: "MONTHLY",
+    },
+  });
+  const intervalCustomer = await call("POST", "/v1/customers", {
+    headers: asKey(),
+    payload: { externalId: `interval_${stamp}`, email: `interval-${stamp}@example.test` },
+  });
+  const intervalSub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `interval-sub-${stamp}` }),
+    payload: { customerId: intervalCustomer.body.data.id, priceId: intervalPrice.body.data.id },
+  });
+  check("a monthly subscriber exists", intervalPlan.status === 201 && intervalSub.status === 201, intervalSub.body);
+  await settle(intervalSub);
+
+  const nowAnnual = await call("PATCH", `/v1/prices/${intervalPrice.body.data.id}`, {
+    headers: asKey(),
+    payload: { interval: "ANNUALLY", unitAmount: 3_000_000 },
+  });
+  check("the price can be moved to annual", nowAnnual.body.data?.version === 2, nowAnnual.body);
+
+  const intervalRenewal = await call("POST", `/v1/subscriptions/${intervalSub.body.data.subscription.id}/renew`, {
+    headers: asKey(),
+    payload: {},
+  });
+  check(
+    "an interval change does not roll forward on its own",
+    intervalRenewal.body.data?.subscription?.price?.id === intervalPrice.body.data.id,
+    intervalRenewal.body.data?.subscription?.price
+  );
+  check("the monthly subscriber is still billed monthly", intervalRenewal.body.data?.amountDue === 300_000, intervalRenewal.body.data);
 
   // Trial length lives on the subscription once it starts, so changing it on
   // the price cannot move anybody who is already trialing.
@@ -759,7 +881,9 @@ async function main(): Promise<void> {
   check("trial length edits in place even with subscribers", trialEdit.body.data?.id === superseded.body.data.id, trialEdit.body);
   check("the trial length was applied", trialEdit.body.data?.trialDays === 14);
 
-  const currencyChange = await call("PATCH", `/v1/prices/${editable.body.data.id}`, {
+  // Aimed at the version people are actually on: v1 has been vacated by the
+  // roll-forward above, and an abandoned row is free to change.
+  const currencyChange = await call("PATCH", `/v1/prices/${superseded.body.data.id}`, {
     headers: asKey(),
     payload: { currency: "USD" },
   });

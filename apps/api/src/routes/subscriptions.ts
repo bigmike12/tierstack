@@ -13,7 +13,7 @@ import {
 import { BillingError, paginated, parsePageQuery, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { environmentOf, requireOrganization, requireSecretKeyOrUser } from "../context";
+import { environmentOf, requireActor, requireOrganization, requireSecretKeyOrUser } from "../context";
 import type { AppConfig } from "../env";
 import { recordAudit } from "../lib/audit";
 import type { RedisClient } from "../lib/redis";
@@ -269,6 +269,45 @@ export function registerSubscriptionRoutes(
       { ...result, subscription: await loadSubscription(prisma, organizationId, subscriptionId) },
       request.requestId
     );
+  });
+
+  /**
+   * Hold a subscription on the price it is currently on, or release it.
+   *
+   * A pinned subscription ignores later versions of its price. This is how a
+   * customer who was promised the rate they signed up on keeps it while the
+   * rest of the book rolls forward at renewal.
+   */
+  app.post("/v1/subscriptions/:subscriptionId/pin-price", async (request) => {
+    const organizationId = requireOrganization(request);
+    requireSecretKeyOrUser(request);
+    const actor = requireActor(request);
+    const { subscriptionId } = request.params as { subscriptionId: string };
+    const body = z.object({ pinned: z.boolean() }).parse(request.body ?? {});
+
+    const existing = await prisma.subscription.findFirst({
+      where: { id: subscriptionId, organizationId },
+      select: { id: true, priceId: true },
+    });
+    if (!existing) throw BillingError.notFound("SUBSCRIPTION_NOT_FOUND", "Subscription");
+
+    await prisma.subscription.update({
+      where: { id: existing.id },
+      data: { pricePinned: body.pinned },
+    });
+
+    await recordAudit(prisma, {
+      organizationId,
+      actorType: actor.kind,
+      userId: actor.kind === "USER" ? actor.userId : null,
+      action: body.pinned ? "subscription.price_pinned" : "subscription.price_unpinned",
+      resource: "subscription",
+      resourceId: existing.id,
+      metadata: { priceId: existing.priceId },
+      ipAddress: request.ip,
+    });
+
+    return success(await loadSubscription(prisma, organizationId, subscriptionId), request.requestId);
   });
 
   app.post("/v1/subscriptions/:subscriptionId/cancel", async (request) => {

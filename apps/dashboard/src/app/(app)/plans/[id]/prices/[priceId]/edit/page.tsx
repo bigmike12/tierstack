@@ -55,8 +55,8 @@ export default async function EditPricePage({
       {superseded ? (
         <p className="mb-4 max-w-3xl rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm">
           New version published. {superseded} existing subscription
-          {superseded === "1" ? "" : "s"} stayed on the previous version at the old price — move them with a
-          plan change when you are ready.
+          {superseded === "1" ? "" : "s"} finish the period they are in at the old price, then move to this
+          one at their next renewal. Pin any of them individually to hold them where they are.
         </p>
       ) : null}
 

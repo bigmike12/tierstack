@@ -112,6 +112,8 @@ export interface Subscription {
   gracePolicy: { gracePeriodDays?: number; failureAction?: string; accessDuringGracePeriod?: string } | null;
   createdAt: string;
   price: Price & { plan: Plan };
+  /** Held on its current price while others roll forward at renewal. */
+  pricePinned?: boolean;
   customer?: { id: string; externalId: string | null; email: string; name: string | null };
   paymentMethod?: PaymentMethod | null;
 }

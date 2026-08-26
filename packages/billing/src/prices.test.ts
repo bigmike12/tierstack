@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archivedCode, changedEconomics, type PriceEconomics } from "./prices";
+import { archivedCode, canRollForward, changedEconomics, resolveCurrentPrice, type PriceEconomics } from "./prices";
 
 const base: PriceEconomics = {
   model: "FLAT_RECURRING",
@@ -76,5 +76,65 @@ describe("archivedCode", () => {
     const long = "a".repeat(64);
     expect(archivedCode(long, 12)).toHaveLength(64);
     expect(archivedCode(long, 12).endsWith("-v12")).toBe(true);
+  });
+});
+
+describe("canRollForward", () => {
+  const monthlyNgn = { intervalUnit: "MONTH", intervalCount: 1, currency: "NGN" };
+
+  it("allows a price rise on the same schedule", () => {
+    expect(canRollForward(monthlyNgn, { ...monthlyNgn })).toBe(true);
+  });
+
+  it("refuses a move from monthly to annual", () => {
+    // Ten times the charge in one go is not something a price edit gets to do
+    // behind the customer's back; that is a plan change, with proration.
+    expect(canRollForward(monthlyNgn, { ...monthlyNgn, intervalUnit: "YEAR" })).toBe(false);
+  });
+
+  it("refuses a change in how many units of the interval", () => {
+    expect(canRollForward(monthlyNgn, { ...monthlyNgn, intervalCount: 3 })).toBe(false);
+  });
+
+  it("refuses a currency change", () => {
+    expect(canRollForward(monthlyNgn, { ...monthlyNgn, currency: "USD" })).toBe(false);
+  });
+});
+
+describe("resolveCurrentPrice", () => {
+  /** A fake price table holding one lineage: successor keyed by predecessor. */
+  function table(successors: Record<string, { id: string }>) {
+    return {
+      price: {
+        findFirst: async ({ where }: { where: { supersedesPriceId: string } }) =>
+          successors[where.supersedesPriceId] ?? null,
+      },
+    };
+  }
+
+  it("returns null when nothing supersedes the price", async () => {
+    expect(await resolveCurrentPrice(table({}), "price_1")).toBeNull();
+  });
+
+  it("finds the immediate successor", async () => {
+    const t = table({ price_1: { id: "price_2" } });
+    expect(await resolveCurrentPrice(t, "price_1")).toEqual({ id: "price_2" });
+  });
+
+  it("walks the whole chain, not just one hop", async () => {
+    const t = table({ price_1: { id: "price_2" }, price_2: { id: "price_3" }, price_3: { id: "price_4" } });
+    expect(await resolveCurrentPrice(t, "price_1")).toEqual({ id: "price_4" });
+  });
+
+  it("starts from the version the subscriber is on, not the head", async () => {
+    const t = table({ price_1: { id: "price_2" }, price_2: { id: "price_3" } });
+    expect(await resolveCurrentPrice(t, "price_2")).toEqual({ id: "price_3" });
+  });
+
+  it("gives up on a cycle rather than spinning during a renewal", async () => {
+    const t = table({ price_1: { id: "price_2" }, price_2: { id: "price_1" } });
+    // Corrupt data should not hang the billing worker. Bounded, and it returns
+    // something billable rather than throwing mid-invoice.
+    await expect(resolveCurrentPrice(t, "price_1", undefined, 5)).resolves.toBeTruthy();
   });
 });

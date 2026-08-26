@@ -137,6 +137,26 @@ export async function deleteProvider(_prev: ActionState, formData: FormData): Pr
   }
 }
 
+/**
+ * Hold a subscription on the price it is on, or let it go.
+ *
+ * The default is that everyone rolls forward onto the current version of their
+ * price at their next renewal. Pinning is the exception, for the customer who
+ * was promised the rate they signed up on.
+ */
+export async function setPricePinned(formData: FormData): Promise<void> {
+  const subscriptionId = String(formData.get("subscriptionId"));
+  const pinned = formData.get("pinned") === "true";
+
+  await apiFetch(`/v1/subscriptions/${subscriptionId}/pin-price`, {
+    method: "POST",
+    body: JSON.stringify({ pinned }),
+  }).catch(() => undefined);
+
+  revalidatePath("/subscriptions");
+  revalidatePath(`/subscriptions/${subscriptionId}`);
+}
+
 export async function testProvider(formData: FormData): Promise<void> {
   await apiFetch(`/v1/payment-providers/${String(formData.get("configId"))}/test`, {
     method: "POST",

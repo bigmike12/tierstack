@@ -464,6 +464,10 @@ model Subscription {
   gracePolicy      Json?
 
   paymentMethodId String?
+  /// Holds this subscription on its current price when that price is superseded.
+  /// Everyone else rolls forward onto the new version at their next renewal;
+  /// this is how a customer promised legacy pricing keeps it.
+  pricePinned     Boolean @default(false)
   metadata        Json    @default("{}")
 
   createdAt DateTime @default(now())

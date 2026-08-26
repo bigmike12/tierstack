@@ -226,3 +226,59 @@ export async function updatePrice(
     };
   });
 }
+
+/**
+ * Walks a price lineage forward to the version currently on sale.
+ *
+ * Supersede links point backwards — a new version records the row it replaced —
+ * so moving forward means asking "which price supersedes this one?" repeatedly.
+ * The loop is bounded: a cycle would mean corrupt data, and spinning on it
+ * during a renewal is worse than billing the price we started from.
+ */
+export async function resolveCurrentPrice<T extends { id: string }>(
+  tx: {
+    price: {
+      findFirst: (args: { where: { supersedesPriceId: string }; include?: unknown }) => Promise<T | null>;
+    };
+  },
+  priceId: string,
+  include?: unknown,
+  maxHops = 20
+): Promise<T | null> {
+  let current: T | null = null;
+  let cursor = priceId;
+
+  for (let hop = 0; hop < maxHops; hop += 1) {
+    const next: T | null = await tx.price.findFirst({
+      where: { supersedesPriceId: cursor },
+      ...(include ? { include } : {}),
+    });
+    if (!next) return current;
+    current = next;
+    cursor = next.id;
+  }
+
+  return current;
+}
+
+/**
+ * Whether a subscription can be moved onto a newer version of its price without
+ * anyone having to agree to it again.
+ *
+ * A different amount, allowance or usage rate is what a price rise is, and it
+ * rolls forward. A different billing interval does not: moving somebody from
+ * monthly to annual changes what they are charged in one go by a factor of ten
+ * or more, and no price edit should be able to do that behind their back. The
+ * merchant has to move them with an explicit plan change, where proration is
+ * calculated and shown.
+ */
+export function canRollForward(
+  from: { intervalUnit: string; intervalCount: number; currency: string },
+  to: { intervalUnit: string; intervalCount: number; currency: string }
+): boolean {
+  return (
+    from.currency === to.currency &&
+    from.intervalUnit === to.intervalUnit &&
+    from.intervalCount === to.intervalCount
+  );
+}

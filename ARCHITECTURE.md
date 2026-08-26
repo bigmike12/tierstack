@@ -225,13 +225,33 @@ credits the unused remainder of the current period and charges the new rate for
 the same window; both halves land on one proration invoice so the arithmetic is
 visible to the customer rather than netted into a single mystery number.
 
-### Price immutability
+### Price versions
 
 A `Price` row that a subscription points at is never edited in place for
-anything that changes what is owed. Amount and interval changes create a **new
-price version**; the old row is archived and existing subscribers stay on it
-until an explicit plan change moves them. Presentational fields (nickname,
-active flag) edit freely.
+anything that changes what is owed. Amount, allowance and metering changes
+create a **new price version**: the old row is archived under `code-vN` and the
+lineage's code follows whichever version is currently on sale. Presentational
+fields, the active flag and the trial length edit freely, and so does anything
+else while no live subscription is bound to the row.
+
+Existing subscribers then **roll forward at their next renewal**, not before:
+
+- the period they are in was already invoiced at the old amount, so nobody is
+  repriced mid-period
+- at renewal, `renewSubscription` walks the lineage forward, bills the current
+  version, and repoints `subscription.priceId` at it — so the row itself
+  answers "why did my bill change"
+- a subscription with `pricePinned` is held where it is, for the customer who
+  was promised the rate they signed up on
+- a **billing interval change never rolls forward on its own**. Moving somebody
+  from monthly to annual multiplies a single charge by an order of magnitude,
+  and that has to be an explicit plan change where proration is calculated and
+  shown — see `canRollForward`.
+- currency cannot change at all while anybody is bound: the invoices, payments
+  and credits behind the price are denominated in the old one.
+
+A price rise is a customer-visible event. The notice email that should precede
+it is not built yet — it belongs with the transactional email work.
 
 ## 8. Payment orchestration
 
@@ -411,7 +431,7 @@ however convenient it is:
 
 Verified end to end against real infrastructure:
 
-- 181 unit tests; 204 e2e checks against real PostgreSQL and Redis
+- 190 unit tests; 220 e2e checks against real PostgreSQL and Redis
 - Paystack, live, 25/25: checkout, settlement, signed webhook, tenant match,
   invoice `PAID`, subscription `ACTIVE`, reusable card stored with no PAN
 
@@ -426,7 +446,7 @@ Not built yet:
 - Monnify and Flutterwave adapters
 - the scheduled dunning retry ladder (`nextRetryAt` exists and is unit-tested;
   no job calls it)
-- transactional email
+- transactional email, including the notice that should precede a price rise
 - the customer-facing portal
 - client SDKs and `/llms.txt`
 - the platform back-office

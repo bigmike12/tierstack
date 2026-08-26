@@ -152,10 +152,12 @@ function PriceForm({
       {editing ? (
         versioned ? (
           <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
-            {subscribers} live subscription{subscribers === 1 ? "" : "s"} on this price. Changing the amount,
-            interval or metering publishes <strong>version {(price?.version ?? 1) + 1}</strong> and archives
-            this one — everyone already subscribed keeps paying what they signed up for until you move them
-            with a plan change. Nickname, trial length and the active flag save in place.
+            {subscribers} live subscription{subscribers === 1 ? "" : "s"} on this price. Changing the amount
+            or metering publishes <strong>version {(price?.version ?? 1) + 1}</strong> and archives this one.
+            Nobody is repriced mid-period — the period they are in was already invoiced — but each of them
+            moves to the new amount at their <strong>next renewal</strong>. Pin a subscription from its own
+            page to hold that customer on what they signed up for. Nickname, trial length and the active flag
+            save in place.
           </p>
         ) : (
           <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
@@ -327,9 +329,9 @@ function PriceForm({
         <p className="text-xs text-muted-foreground">
           {editing
             ? versioned
-              ? "Existing invoices are unchanged either way — they record what was charged at the time."
-              : "Once someone subscribes, editing what they pay publishes a new version instead of repricing them."
-            : "You can edit this later. Once someone is subscribed, editing what they pay publishes a new version rather than repricing them."}
+              ? "Changing the billing interval is the exception: it will not roll anyone forward on its own, because moving somebody from monthly to annual is a plan change, not a price rise."
+              : "Once someone subscribes, editing what they pay publishes a new version that takes effect at their next renewal."
+            : "You can edit this later. Once someone is subscribed, an edit publishes a new version that takes effect at their next renewal."}
         </p>
       </div>
     </form>

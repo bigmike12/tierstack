@@ -22,6 +22,7 @@ import {
   type ComputedLine,
   type PriceSnapshot,
 } from "./pricing";
+import { canRollForward, resolveCurrentPrice } from "./prices";
 import { loadBillingSettings, loadDunningPolicy } from "./settings";
 import { applyTransition, recordInitialStatus } from "./transitions";
 import type { SubscriptionStatus } from "./state-machine";
@@ -232,11 +233,36 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       return { renewed: false as const, invoiceId: null };
     }
 
-    const snapshot = toPriceSnapshot(subscription.price);
+    // A price whose economics were edited while this subscription was live was
+    // superseded rather than rewritten, and the subscription still points at
+    // the version it signed up on. Renewal is where it catches up: the period
+    // just ending was already invoiced at the old amount, so the new one takes
+    // effect from here, which is what a customer means by "from next month".
+    //
+    // Two things hold a subscription back. `pricePinned` is the deliberate one,
+    // for a customer promised the price they signed up on. The other is an
+    // interval change, which is too large a surprise to apply without asking —
+    // see canRollForward.
+    let billingPrice = subscription.price;
+    let rolledForwardFrom: string | null = null;
+
+    if (!subscription.pricePinned) {
+      const current = await resolveCurrentPrice<typeof subscription.price>(
+        tx as never,
+        subscription.priceId,
+        { plan: true, usageMeter: true }
+      );
+      if (current && canRollForward(subscription.price, current)) {
+        billingPrice = current;
+        rolledForwardFrom = subscription.priceId;
+      }
+    }
+
+    const snapshot = toPriceSnapshot(billingPrice);
     assertBillablePriceModel(snapshot);
 
     const settings = await loadBillingSettings(tx, subscription.organizationId);
-    const currency = assertCurrency(subscription.price.currency);
+    const currency = assertCurrency(billingPrice.currency);
     const periodStart = subscription.currentPeriodEnd;
 
     // A trial ends on the day it ends, not on the day the customer signed up.
@@ -254,7 +280,7 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       quantity: subscription.quantity,
       periodStart,
       periodEnd,
-      planName: subscription.price.plan.name,
+      planName: billingPrice.plan.name,
     });
 
     // Consumption for the period that just closed, billed in arrears. The base
@@ -312,6 +338,10 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
         currentPeriodStart: periodStart,
         currentPeriodEnd: periodEnd,
         ...(status === "TRIALING" && anchorDay !== undefined ? { billingAnchorDay: anchorDay } : {}),
+        // Repoint rather than re-resolve on every renewal: the subscription now
+        // genuinely is on the new version, and a support question about why the
+        // bill changed is answerable from the row itself.
+        ...(rolledForwardFrom ? { priceId: billingPrice.id } : {}),
       },
     });
 
@@ -342,6 +372,9 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       amountDue: finalized.amountDue,
       /** What the subscription was before this period opened. */
       previousStatus: status,
+      /** Set when this renewal moved the subscription onto a newer price. */
+      rolledForwardFrom,
+      priceId: billingPrice.id,
     };
   });
 }

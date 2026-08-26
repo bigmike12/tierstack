@@ -181,7 +181,8 @@ export default async function PlanDetailPage({
           <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
             Archiving a price hides it from new signups; everyone already on it keeps paying it. Prices are
             never deleted, because invoices already issued point at them. Editing one that has live
-            subscriptions publishes a new version instead of repricing the people already on it.
+            subscriptions publishes a new version; nobody is repriced mid-period, and each subscriber moves
+            to the new amount at their next renewal unless their subscription is pinned.
           </p>
         </CardContent>
       </Card>
