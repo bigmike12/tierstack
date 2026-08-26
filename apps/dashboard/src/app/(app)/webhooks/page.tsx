@@ -42,7 +42,7 @@ export default async function WebhooksPage({
     <>
       <PageHeader
         title="Webhooks"
-        description="Incoming provider events. The signature is checked against the raw request bytes, the event is de-duplicated, and then the engine asks the provider what actually happened rather than believing the payload."
+        description="Incoming provider events, with the result of each signature check."
       />
 
       <Card className="mb-4">
@@ -118,8 +118,7 @@ export default async function WebhooksPage({
             <Pagination meta={result} basePath="/webhooks" params={{ q }} />
           ) : null}
           <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
-            Events are unique on organization + provider + provider event id, so a replayed delivery is
-            acknowledged and ignored rather than processed twice.
+            A replayed delivery is acknowledged and ignored, never processed twice.
           </p>
         </CardContent>
       </Card>

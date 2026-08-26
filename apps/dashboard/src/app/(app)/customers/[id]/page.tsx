@@ -63,7 +63,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
               ))
             ) : (
               <p className="text-sm text-muted-foreground">
-                None stored. Only provider-issued references are ever kept — never a card number.
+                None stored.
               </p>
             )}
           </CardContent>

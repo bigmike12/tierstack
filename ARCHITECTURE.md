@@ -25,6 +25,7 @@ tierstack/
 │   ├── billing/                the engine: subscriptions, invoices, pricing, proration,
 │   │                           grace periods, payment orchestration
 │   ├── entitlements/           feature-access resolution + cache invalidation
+│   ├── notifications/          customer email: transports, templates, send-once
 │   ├── usage/                  meter definitions, event ingestion, aggregation
 │   └── payments/
 │       ├── core/               PaymentProvider interface, capabilities, router
@@ -91,7 +92,7 @@ row. Models group into seven areas:
 | Customers & money | `Customer`, `PaymentMethod`, `Subscription`, `SubscriptionTransition`, `Invoice`, `InvoiceLineItem`, `InvoiceCounter`, `PaymentAttempt`, `CreditLedgerEntry` |
 | Metering & access | `UsageEvent`, `Entitlement` |
 | Growth | `Coupon`, `CouponRedemption`, `ReferralProgram`, `Referral` |
-| Operations | `WebhookEvent`, `IdempotencyKey`, `PortalSession`, `AuditLog` |
+| Operations | `WebhookEvent`, `IdempotencyKey`, `PortalSession`, `AuditLog`, `EmailMessage` |
 
 Prisma runs **without the Rust query engine** — `provider = "prisma-client"`,
 `engineType = "client"`, talking to Postgres through `@prisma/adapter-pg`. That
@@ -373,7 +374,97 @@ Access during a lapse is a policy question, not a code constant —
 `hasServiceAccess(status, accessDuringGracePeriod)` is the single place it is
 decided.
 
-## 13. Authentication and secrets
+## 13. Dunning and customer email
+
+A failed payment is not a lost customer. In this market a decline is far more
+often a temporary limit, a reissued card or a bank blocking a first online
+charge than an empty account, so the platform asks again on a schedule and
+tells the customer what is happening.
+
+### The ladder
+
+```
+payment fails
+  └─ the attempt is recorded, the subscription lapses into PAST_DUE → GRACE_PERIOD
+  └─ invoice.nextRetryAt is written from the organization's own retryIntervals,
+     measured from the FIRST failure — [0, 1, 3, 5] means same-day, then day 1,
+     day 3, day 5, not a gap that compounds
+  └─ `dunning-retries` runs every 10 minutes and collects whatever is due
+  └─ each attempt either settles (invoice PAID, nextRetryAt cleared, subscription
+     ACTIVE) or reschedules
+  └─ at maxRetryAttempts, nextRetryAt becomes null and the invoice stops being
+     selected; grace expiry then applies the configured failure action
+```
+
+Nothing here is a constant in code — the schedule, the attempt limit, the grace
+window and the terminal action are all `BillingSettings`.
+
+Changing that policy while somebody is already in a grace period draws a line
+between two kinds of setting:
+
+| | on a recovery already running |
+|---|---|
+| grace period length | frozen — the end date was written when the payment failed |
+| failure action | frozen — the snapshot on the subscription decides |
+| access during grace | frozen — a customer does not lose service on terms they never lapsed under |
+| retry schedule and limit | live — read at each failure |
+
+The first three are terms the customer is living under, and a merchant who
+tightens them on Tuesday should not reach back to somebody who lapsed on Monday;
+`subscription.gracePolicy` is the frozen copy that settles it. The retry
+schedule is different: it is how hard the platform tries to collect, it is never
+something the customer was promised, and changing it only ever helps the people
+already failing.
+
+`dunningAttempts` counts the charge that first failed, which was not a retry —
+anything displaying it against `maxRetryAttempts` has to subtract one, or a
+spent ladder reads as "5 of 4".
+
+### Email
+
+`packages/notifications` sits behind the same kind of interface the payment
+rails do: an `EmailTransport` with a Resend implementation and a log
+implementation. With no `RESEND_API_KEY`, the log transport prints every message
+in full and records it against the `LOG` rail — a developer sees exactly what a
+customer would have received, and **nothing unsent is ever recorded as
+delivered**.
+
+Five messages, all derived from state by the `notifications` job rather than
+fired from inside a money transaction:
+
+| | when |
+|---|---|
+| `payment_failed` | each failed attempt, naming the amount, the card and the date of the next try |
+| `dunning_exhausted` | the automatic attempts are over, carrying a hosted checkout link that actually works |
+| `payment_recovered` | the outstanding invoice settled |
+| `price_change` | `priceChangeNoticeDays` before a superseded price applies at renewal |
+| `trial_ending` | `trialEndingNoticeDays` before a trial becomes a charge |
+
+Deriving rather than emitting is deliberate: a webhook settling a payment should
+not be holding a row lock while it waits on an HTTP call to an email provider.
+The cost is that the job must be safe to run repeatedly, which is what
+`EmailMessage.dedupeKey` buys — every key is computed from the same facts each
+time (`payment_failed:inv_123:2` is the second failure on one invoice), so a
+second run finds the message already sent and does nothing.
+
+The row is claimed **before** the provider is called, not after. If the process
+dies mid-send, the evidence is a `PENDING` row naming the customer and the
+reason, rather than an inbox that never received anything and a log that says
+nothing happened.
+
+Two rules run through every template. Say the amount and the date plainly — a
+customer should never have to work out what they are being charged or when, and
+amounts render as `₦5,000.00` rather than the minor units or an ISO code. And
+never link somewhere that cannot help: a pay link appears only when a real
+checkout exists behind it.
+
+`price_change` exists for a specific reason. Automatic roll-forward means a
+recurring charge can go up without the customer doing anything, and a rise
+somebody first learns about from their bank statement is a chargeback the card
+networks will decide against the merchant. The notice, and the line in it saying
+they can cancel before the date, is what makes the roll-forward safe.
+
+## 14. Authentication and secrets
 
 Two credential types, deliberately separate:
 
@@ -394,11 +485,13 @@ Two credential types, deliberately separate:
 Test and live environments are separate down to the key, the provider config
 and the data. A test key cannot read live rows.
 
-## 14. Background jobs
+## 15. Background jobs
 
 | Job | Cadence | What it does |
 |---|---|---|
 | `renewals` | every 5 min | opens the next period, issues the invoice, attempts collection |
+| `dunning-retries` | every 10 min | collects invoices whose next retry is due, on the org's own schedule |
+| `notifications` | every 5 min | sends what the state says a customer should have been told |
 | `grace-expiry` | every 10 min | applies the configured terminal action when grace runs out |
 | `incomplete-expiry` | every 15 min | expires abandoned checkouts and voids their invoices |
 | `idempotency-sweep` | hourly | reclaims expired idempotency records |
@@ -409,7 +502,7 @@ Every job is idempotent and selects on an indexed predicate, so a run that
 finds nothing to do costs one query and a run that overlaps a previous run
 cannot double-charge.
 
-## 15. Invariants
+## 16. Invariants
 
 These hold across the codebase and any change that breaks one is a defect,
 however convenient it is:
@@ -427,34 +520,45 @@ however convenient it is:
 11. Unsupported capability returns an explicit error, never a fake success.
 12. `subscription.status` is written in exactly one place.
 
-## 16. What is verified, and what is not
+## 17. What is verified, and what is not
 
 Verified end to end against real infrastructure:
 
-- 190 unit tests; 220 e2e checks against real PostgreSQL and Redis
-- Paystack, live, 25/25: checkout, settlement, signed webhook, tenant match,
-  invoice `PAID`, subscription `ACTIVE`, reusable card stored with no PAN
+- 216 unit tests; 270 e2e checks against real PostgreSQL and Redis
+- Paystack, live, 28/28 (`scripts/verify-paystack.ts --renew`): checkout,
+  settlement, signed webhook, tenant match, invoice `PAID`, subscription
+  `ACTIVE`, reusable card stored with no PAN, and **an unattended renewal
+  charged against the stored authorization with no checkout opened**
 
-Built and covered end to end against the mock rail, but **not yet exercised
-against live Paystack**:
+That last one covers more than itself. `runDunningRetries` collects through
+`attemptInvoicePayment` → `chargeStoredMethod`, which is the same call, so the
+retry ladder's happy path runs on a rail that has been proven.
 
-- stored-card renewal (`scripts/verify-paystack.ts --renew` does exactly this)
+Built and covered end to end against the mock rail, but **not yet seen against
+live Paystack**:
+
+- a *declined* stored-card charge — the mock declines on demand, but Paystack's
+  real decline codes have never been mapped through `toPaymentStatus` and into
+  the ladder. That is the unhappy half of dunning, and the cheapest remaining
+  unknown: subscribe with one of Paystack's failing test cards and watch what
+  `nextRetryAt` and `failureReason` end up holding.
 - trial conversion at trial end
 
 Not built yet:
 
 - Monnify and Flutterwave adapters
-- the scheduled dunning retry ladder (`nextRetryAt` exists and is unit-tested;
-  no job calls it)
-- transactional email, including the notice that should precede a price rise
-- the customer-facing portal
+- the customer-facing portal — which is where a dunning email's pay link should
+  land, rather than at a bare hosted checkout
+- per-merchant email credentials: today one platform Resend key sends for every
+  organization, with per-org sender name and reply-to
 - client SDKs and `/llms.txt`
 - the platform back-office
 
-## 17. Running it
+## 18. Running it
 
 ```bash
 npm run fresh      # start Postgres + Redis, reset the database, seed, load demo data
+npm run dunning:data  # customers at every point on the retry ladder
 npm run dev        # api, dashboard and workers together
 npm run e2e        # the full end-to-end suite
 npx tsx scripts/verify-paystack.ts --email you@example.com   # live Paystack

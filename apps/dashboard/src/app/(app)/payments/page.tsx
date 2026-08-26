@@ -28,7 +28,7 @@ export default async function PaymentsPage({
     <>
       <PageHeader
         title="Payments"
-        description="Every attempt to collect an invoice, in order. Nothing here is ever rewritten — this is the audit trail a payment dispute is settled with."
+        description="Every attempt to collect an invoice, in order, with its failure code."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4">

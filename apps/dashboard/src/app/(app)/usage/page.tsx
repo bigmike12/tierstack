@@ -57,7 +57,7 @@ export default async function UsagePage({
     <>
       <PageHeader
         title="Usage"
-        description="Consumption is aggregated in PostgreSQL over the events themselves — there is no running counter that could drift away from the record an invoice is built from."
+        description="Recorded consumption for the current billing period."
       />
 
       {!meters || meters.length === 0 ? (
@@ -71,8 +71,7 @@ export default async function UsagePage({
             <CardHeader>
               <CardTitle>Meters</CardTitle>
               <CardDescription>
-                The aggregation belongs to the meter, so the entitlement check and the invoice can never
-                disagree about what a number means.
+                The meter decides how its events are added up.
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0 pb-0">
@@ -221,8 +220,7 @@ export default async function UsagePage({
 
                         {snapshot.overage > 0 ? (
                           <p className="text-xs text-muted-foreground">
-                            Billed in arrears on the invoice that opens the next period — you cannot invoice
-                            for consumption before it happens.
+                            Billed in arrears, on the invoice that opens the next period.
                           </p>
                         ) : null}
                       </CardContent>

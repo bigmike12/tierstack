@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { retryInvoice } from "@/actions/billing";
 import { StatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DescriptionList, EmptyState, Mono, PageHeader, Stat } from "@/components/ui/shell";
@@ -9,16 +10,17 @@ import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate, relativeDays, titleCase } from "@/lib/format";
 import { emptyPage, type Paged } from "@/lib/list";
-import type { BillingSettings, Invoice, Subscription } from "@/lib/types";
+import type { BillingSettings, EmailMessage, Invoice, Subscription } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Dunning" };
 
 export default async function DunningPage() {
-  const [settings, inGrace, unpaidSubs, openInvoices] = await Promise.all([
+  const [settings, inGrace, unpaidSubs, openInvoices, emails] = await Promise.all([
     apiFetchOrNull<BillingSettings>("/v1/billing-settings"),
     apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?status=GRACE_PERIOD&limit=50"),
     apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?status=UNPAID&limit=1"),
     apiFetchOrNull<Paged<Invoice>>("/v1/invoices?status=OPEN&limit=50"),
+    apiFetchOrNull<Paged<EmailMessage>>("/v1/emails?limit=15"),
   ]);
 
   // The counts come from the API's own totals rather than the length of a page,
@@ -33,7 +35,7 @@ export default async function DunningPage() {
     <>
       <PageHeader
         title="Dunning"
-        description="Recovery runs on your policy, not ours. These values are read at the moment a payment fails and frozen onto the subscription, so changing them never alters a grace period already running."
+        description="Who is behind, where each one is in the retry schedule, and what they have been told."
       />
 
       <section aria-label="Recovery summary" className="grid gap-4 sm:grid-cols-3">
@@ -80,9 +82,8 @@ export default async function DunningPage() {
                   },
                 ]}
               />
-              <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-                The scheduled retry ladder is phase 4. Grace periods open and close on this policy today;
-                retries are triggered from an invoice or through <Mono>POST /v1/invoices/:id/pay</Mono>.{" "}
+              <p className="mt-5 text-xs text-muted-foreground">
+                Retries run automatically on this schedule. You can also force one from any open invoice.{" "}
                 <Link href="/settings" className="underline underline-offset-4">
                   Change the policy
                 </Link>
@@ -166,6 +167,8 @@ export default async function DunningPage() {
                 <TR>
                   <TH>Number</TH>
                   <TH>Due</TH>
+                  <TH>Retries</TH>
+                  <TH>Next retry</TH>
                   <TH>Issued</TH>
                   <TH />
                 </TR>
@@ -182,6 +185,25 @@ export default async function DunningPage() {
                       </Link>
                     </TD>
                     <TD className="tabular">{formatAmount(invoice.amountDue, invoice.currency)}</TD>
+                    <TD className="tabular text-muted-foreground">
+                      {invoice.dunningAttempts
+                        ? // dunningAttempts counts the charge that first failed, which was not
+                          // a retry — showing it raw reads as "5 of 4" once the ladder is spent.
+                          `${Math.min(invoice.dunningAttempts - 1, settings?.maxRetryAttempts ?? 0)} of ${settings?.maxRetryAttempts ?? "—"}`
+                        : "—"}
+                    </TD>
+                    <TD className="tabular text-muted-foreground">
+                      {invoice.nextRetryAt ? (
+                        <>
+                          {formatDate(invoice.nextRetryAt)}
+                          <span className="block text-xs">{relativeDays(invoice.nextRetryAt)}</span>
+                        </>
+                      ) : invoice.dunningAttempts ? (
+                        <span className="text-destructive">Attempts exhausted</span>
+                      ) : (
+                        "—"
+                      )}
+                    </TD>
                     <TD className="tabular text-muted-foreground">{formatDate(invoice.createdAt)}</TD>
                     <TD className="text-right">
                       <form action={retryInvoice}>
@@ -205,6 +227,60 @@ export default async function DunningPage() {
               .
             </p>
           ) : null}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>What customers were told</CardTitle>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          {(emails?.items.length ?? 0) === 0 ? (
+            <div className="px-5 pb-5">
+              <EmptyState
+                title="Nothing sent yet"
+                description="Failed payments, price changes and trials ending are emailed automatically."
+              />
+            </div>
+          ) : (
+            <Table>
+              <THead>
+                <TR>
+                  <TH>To</TH>
+                  <TH>Subject</TH>
+                  <TH>Sent</TH>
+                  <TH>Status</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {(emails?.items ?? []).map((message) => (
+                  <TR key={message.id}>
+                    <TD className="text-muted-foreground">{message.toEmail}</TD>
+                    <TD>{message.subject}</TD>
+                    <TD className="tabular text-muted-foreground">
+                      {formatDate(message.sentAt ?? message.createdAt)}
+                      {message.provider ? (
+                        <span className="block text-xs">via {message.provider.toLowerCase()}</span>
+                      ) : null}
+                    </TD>
+                    <TD>
+                      {message.status === "SENT" ? (
+                        <Badge tone="success">Sent</Badge>
+                      ) : message.status === "SUPPRESSED" ? (
+                        <Badge>Email off</Badge>
+                      ) : message.status === "FAILED" ? (
+                        <Badge tone="danger" title={message.failureReason ?? undefined}>
+                          Refused
+                        </Badge>
+                      ) : (
+                        <Badge tone="warning">Pending</Badge>
+                      )}
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </>

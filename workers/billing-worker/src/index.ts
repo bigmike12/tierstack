@@ -6,7 +6,9 @@ loadRootEnv();
 import { Queue, Worker, type Job } from "bullmq";
 import { createPrismaClient } from "@tierstack/database";
 import Redis from "ioredis";
+import { createEmailTransport } from "@tierstack/notifications";
 import {
+  runDunningRetries,
   runGraceExpiry,
   runIdempotencySweep,
   runIncompleteExpiry,
@@ -14,11 +16,14 @@ import {
   runSessionSweep,
   type JobContext,
 } from "./jobs";
+import { runNotifications, type NotificationContext } from "./notifications";
 
 const QUEUE_NAME = "billing";
 
 type JobName =
   | "renewals"
+  | "dunning-retries"
+  | "notifications"
   | "grace-expiry"
   | "incomplete-expiry"
   | "idempotency-sweep"
@@ -46,11 +51,22 @@ async function main(): Promise<void> {
     log: (message, meta) => console.log(`[billing-worker] ${message}`, meta ?? ""),
   };
 
+  // No key configured means the log transport, which prints every message it
+  // would have sent. Nothing silently disappears, and nothing is recorded as
+  // delivered that was not.
+  const transport = createEmailTransport({ resendApiKey: process.env.RESEND_API_KEY });
+  const notifications: NotificationContext = { ...ctx, transport };
+  ctx.log("email transport", { provider: transport.kind });
+
   const queue = new Queue(QUEUE_NAME, { connection });
 
   // Schedules are intentionally frequent: billing work is idempotent, so a run
   // that finds nothing to do costs one indexed query.
   await queue.upsertJobScheduler("renewals", { pattern: "*/5 * * * *" }, { name: "renewals" });
+  await queue.upsertJobScheduler("dunning-retries", { pattern: "*/10 * * * *" }, { name: "dunning-retries" });
+  // Notice before a charge is the point, so this runs often enough that a
+  // price-change or trial-ending email is never late by more than a few minutes.
+  await queue.upsertJobScheduler("notifications", { pattern: "*/5 * * * *" }, { name: "notifications" });
   await queue.upsertJobScheduler("grace-expiry", { pattern: "*/10 * * * *" }, { name: "grace-expiry" });
   await queue.upsertJobScheduler("incomplete-expiry", { pattern: "*/15 * * * *" }, { name: "incomplete-expiry" });
   await queue.upsertJobScheduler("idempotency-sweep", { pattern: "0 * * * *" }, { name: "idempotency-sweep" });
@@ -62,6 +78,10 @@ async function main(): Promise<void> {
       switch (job.name as JobName) {
         case "renewals":
           return runRenewals(ctx);
+        case "dunning-retries":
+          return runDunningRetries(ctx);
+        case "notifications":
+          return runNotifications(notifications);
         case "grace-expiry":
           return runGraceExpiry(ctx);
         case "incomplete-expiry":

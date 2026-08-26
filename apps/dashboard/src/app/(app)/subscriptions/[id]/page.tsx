@@ -135,8 +135,8 @@ export default async function SubscriptionPage({ params }: { params: Promise<{ i
               </form>
               <p className="text-xs text-muted-foreground">
                 {subscription.pricePinned
-                  ? "This subscription ignores newer versions of its price. Releasing it means the next renewal catches up to whatever the price is by then."
-                  : "If this price is edited, this subscription moves to the new amount at its next renewal — never mid-period. Pin it to hold this customer on what they signed up for."}
+                  ? "Held on this price. Releasing it means the next renewal catches up."
+                  : "Moves to the new amount at the next renewal if this price is edited. Pin it to hold this customer where they are."}
               </p>
             </div>
           </CardContent>
