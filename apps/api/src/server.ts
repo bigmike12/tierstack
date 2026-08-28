@@ -22,6 +22,7 @@ import { registerMetricsRoutes } from "./routes/metrics";
 import { registerMockRoutes } from "./routes/mock";
 import { registerOrganizationRoutes } from "./routes/organizations";
 import { registerPaymentProviderRoutes } from "./routes/payment-providers";
+import { registerPortalRoutes } from "./routes/portal";
 import { registerSubscriptionRoutes } from "./routes/subscriptions";
 import { registerUsageRoutes } from "./routes/usage";
 import { registerWebhookEventRoutes, registerWebhookRoutes } from "./routes/webhooks";
@@ -114,6 +115,7 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
   registerCustomerRoutes(app, prisma);
   registerSubscriptionRoutes(app, prisma, config, redis);
   registerInvoiceRoutes(app, prisma, config, redis);
+  registerPortalRoutes(app, prisma, config, redis);
   registerMetricsRoutes(app, prisma);
   registerUsageRoutes(app, prisma, config, redis);
   registerEntitlementRoutes(app, prisma, redis);

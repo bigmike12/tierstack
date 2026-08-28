@@ -1,3 +1,4 @@
+import { hashPortalToken } from "@tierstack/billing";
 import type { PrismaClient } from "@tierstack/database";
 import { BillingError } from "@tierstack/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -19,6 +20,14 @@ const PUBLIC_PREFIXES = [
 export function registerAuth(app: FastifyInstance, prisma: PrismaClient, config: AppConfig): void {
   app.addHook("preHandler", async (request) => {
     if (PUBLIC_PREFIXES.some((prefix) => request.url.startsWith(prefix))) return;
+
+    // The customer portal is a third identity entirely — a token scoped to
+    // exactly one customer, never an organization actor — so it is resolved
+    // on its own rather than being tried as an API key first.
+    if (request.url.startsWith("/portal/")) {
+      await authenticateCustomer(request, prisma);
+      return;
+    }
 
     const apiKeySecret = readBearer(request);
     if (apiKeySecret) {
@@ -80,6 +89,45 @@ async function authenticateApiKey(
   void prisma.apiKey
     .update({ where: { id: record.id }, data: { lastUsedAt: new Date() } })
     .catch(() => undefined);
+}
+
+/**
+ * A portal token proves exactly one thing: this bearer holds the link a
+ * merchant sent one customer. It never becomes an `Actor` and never carries a
+ * role — `requireCustomer` is the only thing that can read it, and nothing
+ * scoped to an organization actor accepts it.
+ */
+async function authenticateCustomer(request: FastifyRequest, prisma: PrismaClient): Promise<void> {
+  const token = readBearer(request);
+  if (!token) {
+    throw new BillingError(
+      "UNAUTHENTICATED",
+      "Send the portal session token as `Authorization: Bearer <token>`."
+    );
+  }
+
+  const session = await prisma.portalSession.findUnique({
+    where: { tokenHash: hashPortalToken(token) },
+  });
+  if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
+    throw new BillingError("UNAUTHENTICATED", "This portal link has expired or is no longer valid.");
+  }
+
+  request.customer = {
+    customerId: session.customerId,
+    organizationId: session.organizationId,
+    portalSessionId: session.id,
+  };
+  request.organizationId = session.organizationId;
+  // A portal action must stay on the rail the customer's subscription is
+  // actually on — the environment of the API key that minted this link.
+  request.environment = session.environment as "TEST" | "LIVE";
+
+  if (!session.usedAt) {
+    void prisma.portalSession
+      .update({ where: { id: session.id }, data: { usedAt: new Date() } })
+      .catch(() => undefined);
+  }
 }
 
 async function authenticateSession(
