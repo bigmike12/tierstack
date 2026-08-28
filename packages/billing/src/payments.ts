@@ -1,5 +1,7 @@
 import type { PrismaClient, TransactionClient } from "@tierstack/database";
 import {
+  classifyFailure,
+  isWorthRetrying,
   requireCapability,
   type PaymentProvider,
   type PaymentResult,
@@ -453,15 +455,29 @@ async function failInvoiceInTransaction(
     select: { createdAt: true },
   });
 
+  // The reason is read from *this* failure, not the first one: a card that
+  // bounced on insufficient funds last week and comes back expired today is a
+  // different fact, and the ladder should react to what just happened.
+  const latestFailure = await tx.paymentAttempt.findFirst({
+    where: { invoiceId: invoice.id, status: "FAILED" },
+    orderBy: { createdAt: "desc" },
+    select: { failureReason: true },
+  });
+  const worthRetrying = isWorthRetrying(classifyFailure(latestFailure?.failureReason));
+
   await tx.invoice.update({
     where: { id: invoice.id },
     data: {
       dunningAttempts: failedAttempts,
-      // `failedAttempts` counts the original charge too, and that was not a
-      // retry. Subtracting it is what makes the first entry in the schedule
-      // reachable: [0, 1, 3, 5] means the first retry is same-day, which is
-      // where most recoveries happen.
-      nextRetryAt: nextRetryAt(policy, firstFailure?.createdAt ?? now, Math.max(failedAttempts - 1, 0)),
+      // A reason nothing will fix by waiting — an expired card, a stolen one —
+      // ends the ladder immediately rather than spending the schedule's four
+      // attempts asking the same dead card again. `null` is the same signal
+      // "retries exhausted" already uses, so the exhausted-dunning email (with
+      // its "update your payment method" link) fires on the very next pass
+      // instead of after days of pointless retries.
+      nextRetryAt: worthRetrying
+        ? nextRetryAt(policy, firstFailure?.createdAt ?? now, Math.max(failedAttempts - 1, 0))
+        : null,
     },
   });
 
