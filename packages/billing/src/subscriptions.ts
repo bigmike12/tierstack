@@ -208,6 +208,15 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
   const branding = loadBranding();
 
   return prisma.$transaction(async (tx) => {
+    // Two renewal calls for the same subscription can arrive close together —
+    // the renewals sweep and a manual "renew now" click, a retried request
+    // racing the one it retried. Both reading the same currentPeriodEnd and
+    // both opening a period from it is how the same period gets invoiced, and
+    // charged, twice. This serializes them: the second caller blocks here
+    // until the first commits, then reads whatever currentPeriodEnd the first
+    // one actually left behind, rather than the stale value it started with.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscriptionId}))`;
+
     const subscription = await tx.subscription.findUnique({
       where: { id: subscriptionId },
       include: { price: { include: { plan: true, usageMeter: true } } },
