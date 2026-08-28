@@ -353,7 +353,13 @@ export function registerSubscriptionRoutes(
    * The renewal worker calls the same function on a schedule; exposing it makes
    * the cycle testable without waiting a month.
    */
-  app.post("/v1/subscriptions/:subscriptionId/renew", async (request) => {
+  /**
+   * A caller-supplied Idempotency-Key protects a retried request; the
+   * advisory locks inside renewSubscription/attemptInvoicePayment protect
+   * everything else — two genuinely different callers (a manual click racing
+   * the renewals sweep) with no key in common.
+   */
+  app.post("/v1/subscriptions/:subscriptionId/renew", async (request, reply) => {
     const organizationId = requireOrganization(request);
     requireSecretKeyOrUser(request);
     const { subscriptionId } = request.params as { subscriptionId: string };
@@ -370,27 +376,42 @@ export function registerSubscriptionRoutes(
     });
     if (!owned) throw BillingError.notFound("SUBSCRIPTION_NOT_FOUND", "Subscription");
 
-    const result = await renewSubscription(prisma, subscriptionId);
-
-    let payment = null;
-    if (result.renewed && result.invoiceId && body.collectPayment) {
-      payment = await attemptInvoicePayment(prisma, providerDeps, {
-        organizationId,
-        invoiceId: result.invoiceId,
-        environment: environmentOf(request),
-        metadata: body.metadata,
-      }).catch((error) => {
-        if (error instanceof BillingError) {
-          return { failed: true, code: error.code, message: error.message };
-        }
-        throw error;
-      });
-    }
-
-    return success(
-      { ...result, payment, subscription: await loadSubscription(prisma, organizationId, subscriptionId) },
-      request.requestId
+    const idem = await withIdempotency(
+      request,
+      reply,
+      { prisma, ttlHours: config.IDEMPOTENCY_TTL_HOURS },
+      organizationId
     );
+    if (idem.replay) return reply.status(idem.status).send(idem.body);
+
+    try {
+      const result = await renewSubscription(prisma, subscriptionId);
+
+      let payment = null;
+      if (result.renewed && result.invoiceId && body.collectPayment) {
+        payment = await attemptInvoicePayment(prisma, providerDeps, {
+          organizationId,
+          invoiceId: result.invoiceId,
+          environment: environmentOf(request),
+          metadata: body.metadata,
+        }).catch((error) => {
+          if (error instanceof BillingError) {
+            return { failed: true, code: error.code, message: error.message };
+          }
+          throw error;
+        });
+      }
+
+      const payload = success(
+        { ...result, payment, subscription: await loadSubscription(prisma, organizationId, subscriptionId) },
+        request.requestId
+      );
+      await idem.complete(200, payload);
+      return reply.send(payload);
+    } catch (error) {
+      await releaseIdempotency(prisma, organizationId, request);
+      throw error;
+    }
   });
 
   app.get("/v1/subscriptions/:subscriptionId/transitions", async (request) => {

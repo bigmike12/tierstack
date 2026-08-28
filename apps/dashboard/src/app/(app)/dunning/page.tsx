@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { retryInvoice } from "@/actions/billing";
+import { CustomerCell } from "@/components/customer-cell";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -121,7 +122,7 @@ export default async function DunningPage() {
                   <TR key={sub.id}>
                     <TD>
                       <Link href={`/subscriptions/${sub.id}`} className="underline-offset-4 hover:underline">
-                        {sub.customer?.externalId ?? sub.customer?.email ?? "—"}
+                        <CustomerCell customer={sub.customer} />
                       </Link>
                     </TD>
                     <TD className="text-muted-foreground">{sub.price?.plan?.name ?? "—"}</TD>

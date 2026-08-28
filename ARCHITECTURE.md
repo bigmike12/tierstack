@@ -18,7 +18,9 @@ Flutterwave), and it — not the rail — is the record of what a customer owes.
 tierstack/
 ├── apps/
 │   ├── api/                    Fastify 5 HTTP API — the only writer of business data
-│   └── dashboard/              Next.js 15 App Router — the merchant-facing console
+│   ├── dashboard/              Next.js 15 App Router — the merchant-facing console
+│   ├── portal/                 Next.js — the customer-facing billing page
+│   └── site/                   Next.js — the marketing page, static, no API
 ├── packages/
 │   ├── shared/                 money, intervals, ids, errors, config, env loading
 │   ├── database/               Prisma client factory (Rust-free driver adapter)
@@ -332,6 +334,35 @@ provider  ──POST──▶  /v1/webhooks/:provider
 - Frontend callbacks are never trusted. A browser returning from checkout
   triggers a **server-side verification** call, not a state change.
 
+### When the webhook never comes
+
+A webhook is a delivery promise made by somebody else's infrastructure, and the
+platform cannot depend on one arriving. A tunnel drops, a URL is typed without
+its path, a deploy lands mid-flight — and some outcomes are never sent at all:
+Paystack sends nothing when a customer declines on the checkout page.
+
+Every one of those leaves the same residue. The attempt sits `PENDING`, the
+invoice sits owed, and either a customer paid and was not credited or a customer
+failed and was never dunned. It is the worst failure a billing system has,
+because it looks exactly like nothing happening.
+
+So the platform asks. `reconciliation` runs every ten minutes over attempts that
+have been unresolved for more than fifteen minutes — long enough that the
+customer is not still on the checkout page — calls `verifyPayment`, and applies
+any terminal answer through exactly the path a webhook would have taken. The
+same thing is available on demand at
+`POST /v1/payment-attempts/:id/reconcile` for whoever is staring at a stuck
+payment now.
+
+This is the other half of "never trust the frontend, ask the provider": the
+provider is asked about **silence** too, not only about claims.
+
+Applying a result is idempotent per attempt. Webhook de-duplication protects the
+webhook path, but that table says nothing about a reconciliation job asking
+about an attempt it has already been told about — so `applyPaymentResult`
+refuses to touch an attempt that has already settled. Without that, asking twice
+adds the amount to the invoice twice.
+
 ## 10. Idempotency
 
 Every money-moving `POST` accepts an `Idempotency-Key`. The key is stored with
@@ -399,6 +430,32 @@ payment fails
 Nothing here is a constant in code — the schedule, the attempt limit, the grace
 window and the terminal action are all `BillingSettings`.
 
+### Not every decline deserves the ladder
+
+A card that expired last March will decline identically on every one of the next
+four attempts. Walking the schedule anyway costs the customer four alarming
+emails and five days before anyone tells them the only thing that would help.
+
+So the adapter classifies the provider's decline text once, and the engine acts
+on the class rather than the prose:
+
+| | |
+|---|---|
+| `RETRYABLE` | insufficient funds, do-not-honour, issuer trouble, limits — walks the full ladder |
+| `REQUIRES_ACTION` | expired, invalid, restricted, not-permitted, stolen — `nextRetryAt` is set to null immediately |
+| `UNKNOWN` | not recognised; treated as retryable, and recorded as unrecognised |
+
+Unknown is deliberately retryable. Guessing "give up" on a reason nobody has
+seen would abandon a recoverable customer, which is the more expensive of the
+two mistakes. The pattern lists grow as real responses are observed — live
+Paystack has so far been seen to return the bare string `"Declined"`, which says
+nothing about why and so classifies as retryable.
+
+`REQUIRES_ACTION` ends the ladder with a different email: `card_needs_replacing`
+rather than `dunning_exhausted`. One says "sit tight, we will try again on
+Thursday"; the other says "Thursday will not help, and here is the thing that
+will".
+
 Changing that policy while somebody is already in a grace period draws a line
 between two kinds of setting:
 
@@ -435,7 +492,8 @@ fired from inside a money transaction:
 | | when |
 |---|---|
 | `payment_failed` | each failed attempt, naming the amount, the card and the date of the next try |
-| `dunning_exhausted` | the automatic attempts are over, carrying a hosted checkout link that actually works |
+| `dunning_exhausted` | the automatic attempts are over, carrying a portal link that actually works |
+| `card_needs_replacing` | the decline will never clear, so the ladder stopped early and asks for a different card |
 | `payment_recovered` | the outstanding invoice settled |
 | `price_change` | `priceChangeNoticeDays` before a superseded price applies at renewal |
 | `trial_ending` | `trialEndingNoticeDays` before a trial becomes a charge |
@@ -464,7 +522,68 @@ somebody first learns about from their bank statement is a chargeback the card
 networks will decide against the merchant. The notice, and the line in it saying
 they can cancel before the date, is what makes the roll-forward safe.
 
-## 14. Authentication and secrets
+## 14. The customer portal
+
+Where a dunning email sends people. A separate Next.js app on `PORTAL_URL`,
+not a route group inside the dashboard, because the boundary is the feature: a
+customer must not be one URL guess away from an operator console.
+
+```
+merchant                                  customer
+   │  POST /v1/portal-sessions               │
+   │  (secret key, customerId)               │
+   ▼                                         │
+ { url: PORTAL_URL/s/<token>, expiresAt }    │
+   │                                         │
+   └──────── emailed, or linked from the app ┘
+                       │
+                       ▼
+        GET /s/<token>   ── route handler ──▶ verifies the token,
+                                              moves it to an httpOnly cookie,
+                                              redirects to /
+                       │
+                       ▼
+        /portal/v1/*     everything scoped to one customer by the token
+```
+
+### Two credential spaces, separated in both directions
+
+A portal token authenticates **only** `/portal/*`, and an API key authenticates
+**only** outside it. Neither is a weaker version of the other: an API key
+carries the whole organization's authority and has no customer in scope, while
+a portal token carries one customer and none of the organization's authority.
+The actor type is `CUSTOMER`, and management routes take
+`requireManagementActor` rather than `requireActor`, so "not an API key" no
+longer silently means "a user".
+
+No portal route takes a customer id. It comes from the token, which is the only
+arrangement in which a portal can be safe.
+
+### The token
+
+Generated once, stored only as a SHA-256 hash, and short-lived — an hour when a
+merchant mints one on demand, a week when the dunning job puts one in an email
+that may not be read until the following morning. It travels in a URL because
+email leaves no alternative, and leaves the URL on arrival: the landing route
+checks it, sets an httpOnly cookie and redirects to a clean address, so browser
+history, a shared screen and a forwarded link all carry nothing usable.
+Expiry is checked on every request rather than swept, and `PORTAL_LINK_EXPIRED`
+is a distinct code so the portal can offer a new link instead of a login wall.
+
+### What a customer can do
+
+Pay an outstanding invoice, cancel at period end, undo that cancellation, and
+read their own invoices. Paying always opens a **fresh hosted checkout** rather
+than charging the card on file — the card on file is what has just been
+failing, and someone who came here to fix that needs to be able to use a
+different one. Actions are audited with `actorType: CUSTOMER`, so the trail
+distinguishes a cancellation the customer made from one an operator made.
+
+Updating a card without paying is not offered, because neither rail supports a
+zero-amount setup. The portal says the true thing instead — paying with a
+different card saves it for next time.
+
+## 15. Authentication and secrets
 
 Two credential types, deliberately separate:
 
@@ -485,7 +604,7 @@ Two credential types, deliberately separate:
 Test and live environments are separate down to the key, the provider config
 and the data. A test key cannot read live rows.
 
-## 15. Background jobs
+## 16. Background jobs
 
 | Job | Cadence | What it does |
 |---|---|---|
@@ -494,6 +613,7 @@ and the data. A test key cannot read live rows.
 | `notifications` | every 5 min | sends what the state says a customer should have been told |
 | `grace-expiry` | every 10 min | applies the configured terminal action when grace runs out |
 | `incomplete-expiry` | every 15 min | expires abandoned checkouts and voids their invoices |
+| `reconciliation` | every 10 min | asks the provider about attempts no webhook ever reported |
 | `idempotency-sweep` | hourly | reclaims expired idempotency records |
 | `session-sweep` | daily 03:00 | reclaims expired sessions |
 | usage rollups | usage-worker | pre-aggregates high-volume meters |
@@ -502,7 +622,7 @@ Every job is idempotent and selects on an indexed predicate, so a run that
 finds nothing to do costs one query and a run that overlaps a previous run
 cannot double-charge.
 
-## 16. Invariants
+## 17. Invariants
 
 These hold across the codebase and any change that breaks one is a defect,
 however convenient it is:
@@ -520,15 +640,18 @@ however convenient it is:
 11. Unsupported capability returns an explicit error, never a fake success.
 12. `subscription.status` is written in exactly one place.
 
-## 17. What is verified, and what is not
+## 18. What is verified, and what is not
 
 Verified end to end against real infrastructure:
 
-- 216 unit tests; 270 e2e checks against real PostgreSQL and Redis
+- 230 unit tests; 328 e2e checks against real PostgreSQL and Redis
+- the portal driven in a real browser: link → page → checkout → paid → active
 - Paystack, live, 28/28 (`scripts/verify-paystack.ts --renew`): checkout,
   settlement, signed webhook, tenant match, invoice `PAID`, subscription
   `ACTIVE`, reusable card stored with no PAN, and **an unattended renewal
   charged against the stored authorization with no checkout opened**
+- Paystack, live, declined: no webhook is sent at all, reconciliation asks and
+  gets `FAILED` with `gateway_response: "Declined"`, and the invoice stays owed
 
 That last one covers more than itself. `runDunningRetries` collects through
 `attemptInvoicePayment` → `chargeStoredMethod`, which is the same call, so the
@@ -537,29 +660,22 @@ retry ladder's happy path runs on a rail that has been proven.
 Built and covered end to end against the mock rail, but **not yet seen against
 live Paystack**:
 
-- a *declined* stored-card charge — the mock declines on demand, but Paystack's
-  real decline codes have never been mapped through `toPaymentStatus` and into
-  the ladder. That is the unhappy half of dunning, and the cheapest remaining
-  unknown: subscribe with one of Paystack's failing test cards and watch what
-  `nextRetryAt` and `failureReason` end up holding.
 - trial conversion at trial end
 
 Not built yet:
 
 - Monnify and Flutterwave adapters
-- the customer-facing portal — which is where a dunning email's pay link should
-  land, rather than at a bare hosted checkout
 - per-merchant email credentials: today one platform Resend key sends for every
   organization, with per-org sender name and reply-to
 - client SDKs and `/llms.txt`
 - the platform back-office
 
-## 18. Running it
+## 19. Running it
 
 ```bash
 npm run fresh      # start Postgres + Redis, reset the database, seed, load demo data
 npm run dunning:data  # customers at every point on the retry ladder
-npm run dev        # api, dashboard and workers together
+npm run dev        # api, dashboard, portal, site and workers together
 npm run e2e        # the full end-to-end suite
 npx tsx scripts/verify-paystack.ts --email you@example.com   # live Paystack
 ```

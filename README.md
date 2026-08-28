@@ -46,6 +46,7 @@ against a real database.
 | Price versioning: an edit that would reprice live subscribers publishes a new version instead | Complete |
 | Automated dunning: the retry ladder runs on the developer's own schedule | Complete |
 | Transactional email: failed payments, recovery, price-change and trial-ending notices | Complete (Resend, or a log transport when no key is set) |
+| Customer billing portal: pay an outstanding invoice, cancel, undo a cancellation | Complete, on its own app and its own credential space |
 
 **Deliberately not built yet** — and, importantly, not faked:
 
@@ -55,7 +56,8 @@ against a real database.
 | Paystack direct debit | Mandate creation is not implemented, so the adapter reports `directDebit: false` and the engine never routes to it. |
 | A declined stored-card charge on live Paystack | The mock declines on demand and the ladder is covered end to end against it. Paystack's own decline codes have never been mapped through the adapter — the unhappy half of dunning is unproven on the real rail. |
 | Per-merchant email credentials | One platform Resend key sends for every organization today, with per-org sender name and reply-to. Each merchant sending from their own verified domain is not built. |
-| Customer portal, TypeScript/React SDKs, `/llms.txt` (phase 5) | Not present. The API they would sit on is. A dunning email's pay link goes to a hosted checkout because there is no portal for it to land on yet. |
+| Updating a card without paying | Neither rail supports a zero-amount setup, so the portal does not pretend to. Paying with a different card saves it for next time, and the portal says so. |
+| TypeScript/React SDKs, `/llms.txt` (phase 5) | Not present. The API they would sit on is. |
 | Coupons, referrals, credit ledger (phase 6) | Schema exists; no engine. |
 
 Any capability a provider does not have returns `UNSUPPORTED_PROVIDER_CAPABILITY`.
@@ -148,6 +150,8 @@ reads as "no data yet".
 | Invoices | Filterable list; detail shows line items, totals and every payment attempt |
 | Payments | Every attempt in order, with failure codes |
 | Dunning | Your configured policy, who is in a grace period, where each open invoice is on the retry ladder, and every email a customer was sent |
+| Portal | A separate customer-facing app on `PORTAL_URL`, reached by a short-lived link rather than a password |
+| Site | The marketing site and the API docs — `/`, `/how-it-works`, `/features`, `/developers`, `/docs`, `/status` — on its own static app. The product name lives in `apps/site/src/brand.ts` and nowhere else; shared copy lists live in `apps/site/src/content.ts`; the documentation is data in `apps/site/src/docs/content.ts` and every route it describes must exist in `apps/api/src/routes` |
 | Payment Providers | Configure and test rails; capabilities come from the adapter itself |
 | API Keys | Create (shown once), list, revoke |
 | Webhooks | Endpoint URLs and the received-event log with signature status |
@@ -190,7 +194,7 @@ PostgreSQL       Provider adapters ──► Paystack · Monnify · Flutterwave 
 | `packages/payments/mock` | A complete simulated rail: hosted checkout, tokenization, recurring charges, declines, refunds, signed webhooks |
 | `apps/api` | HTTP surface, authentication, tenancy, idempotency, mock checkout page, webhook intake |
 | `apps/dashboard` | Next.js App Router operator UI: auth, the section-57 navigation, and a page per capability |
-| `workers/billing-worker` | Renewals, grace expiry, idempotency and session sweeps (BullMQ) |
+| `workers/billing-worker` | Renewals, grace expiry, payment reconciliation, idempotency and session sweeps (BullMQ) |
 
 ---
 
@@ -439,18 +443,55 @@ tierstack/
 | `npm run e2e` | Full lifecycle against real infrastructure |
 | `npm run typecheck` | `tsc` across the monorepo |
 
+## Deploying the marketing site
+
+`apps/site` is a static Next app with no server dependencies — every route is
+prerendered — so it will run on any host that runs Next, and `next build`
+followed by `next start` is the whole story.
+
+Two environment variables must be set on the host. There is no `.env` file on a
+hosting platform, so the local defaults would apply silently in production and
+ship a site whose buttons point at localhost; a production build refuses to run
+without them instead.
+
+| Variable | What breaks without it |
+| --- | --- |
+| `SITE_URL` | `metadataBase`. Every Open Graph and Twitter URL resolves relative, so link previews on WhatsApp, Slack and X render nothing. |
+| `APP_URL` | Every "Start building" button on the site. |
+
+The link-preview card at `/opengraph-image` is generated from
+`apps/site/src/brand.ts` at build time, so changing the product name changes
+the card on the next deploy — there is no exported image anywhere holding a
+stale version of it.
+
 ## Next steps
 
 Recommended order:
 
-1. **Watch a real Paystack decline.** Subscribe with one of Paystack's failing
-   test cards and check what `nextRetryAt` and `failureReason` end up holding.
-   The ladder's happy path is proven on the real rail; its unhappy half is not.
-2. **The customer portal.** Every dunning email now needs somewhere to send
-   people, and `PortalSession` is already in the schema.
-3. **Coupons.** The tables, the `COUPON` line type and negative-line arithmetic
+1. **Paystack decline handling — partially proven, one gap found and fixed.**
+   `npx tsx scripts/verify-paystack.ts --decline` walks a real decline through
+   Paystack. Two things learned from running it against the live rail:
+   - Webhook delivery is best-effort. A confirmed card decline
+     (`4084 0800 0000 0409`, screenshot-verified) produced *zero* webhook
+     events — not a signature or tunnel problem, Paystack simply never sent
+     one. Fixed: `POST /v1/payment-attempts/:id/sync` and the
+     `payment-reconciliation` BullMQ job (`workers/billing-worker`, every 2
+     minutes, gives up after 24h) now actively ask the provider instead of
+     only waiting on delivery that may never come — reusing the same
+     `applyPaymentResult` path the webhook handler uses.
+   - Paystack itself often reports a widget-declined-then-closed session as
+     `abandoned`, not `failed` — `abandoned` was already deliberately mapped
+     to `PENDING` rather than `FAILED` in `mapping.ts`, and that turned out to
+     be correct, not a bug: the transaction never reached a provider-side
+     terminal decision.
+   Still open: a genuine Paystack `failed` verdict with a captured
+   `failureCode`/`failureReason` hasn't been observed yet on the live rail —
+   worth another pass to confirm the failure-code capture path specifically,
+   though the safety-critical property (nothing is ever falsely marked paid,
+   and nothing is stuck in PENDING forever) is now proven.
+2. **Coupons.** The tables, the `COUPON` line type and negative-line arithmetic
    already exist, so it is the cheapest growth feature to finish.
-4. **SDKs and `/llms.txt`**, then a second real provider — "provider-agnostic"
+3. **SDKs and `/llms.txt`**, then a second real provider — "provider-agnostic"
    is untested until the router has failed over between two live rails.
 
 Also needed before launch: a platform back-office for Tierstack itself, and an

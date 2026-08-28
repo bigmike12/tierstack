@@ -1,5 +1,7 @@
 import type { PrismaClient, TransactionClient } from "@tierstack/database";
 import {
+  classifyFailure,
+  isWorthRetrying,
   requireCapability,
   type PaymentProvider,
   type PaymentResult,
@@ -16,7 +18,7 @@ import {
 } from "@tierstack/shared";
 import { applyPaymentToInvoice, assertPayable } from "./invoice";
 import { nextRetryAt, openGracePeriod } from "./grace";
-import { resolveProviders, type ProviderFactoryDeps } from "./providers";
+import { instantiateProvider, resolveProviders, type ProviderFactoryDeps } from "./providers";
 import { loadDunningPolicy } from "./settings";
 import { applyTransition } from "./transitions";
 import type { SubscriptionStatus } from "./state-machine";
@@ -121,20 +123,50 @@ export async function attemptInvoicePayment(
 
     // The attempt row is written before the provider is called, so a crash
     // mid-flight still leaves a record to reconcile against.
-    const attempt = await prisma.paymentAttempt.create({
-      data: {
-        id: attemptId,
-        organizationId: params.organizationId,
-        invoiceId: invoice.id,
-        customerId: invoice.customerId,
-        provider: candidate.config.provider,
-        paymentMethodId: paymentMethod?.id ?? null,
-        amount: amount.amount,
-        currency,
-        status: "PROCESSING",
-        attemptNumber,
-        metadata: (params.metadata ?? {}) as never,
-      },
+    //
+    // Two calls can arrive for the same invoice close together — a dunning
+    // retry and a manual "retry payment" click, a worker retry racing the
+    // request it retried. Both reading "no attempt in flight" and both
+    // proceeding is exactly how a customer gets charged twice for one
+    // invoice. The advisory lock makes the check-then-create atomic across
+    // connections: a second caller blocks here until the first's attempt row
+    // exists, then sees it and refuses rather than racing to create its own.
+    const attempt = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoice.id}))`;
+
+      const inFlight = await tx.paymentAttempt.findFirst({
+        where: {
+          invoiceId: invoice.id,
+          status: "PROCESSING",
+          // Long enough to cover a real provider round-trip, short enough that
+          // a crashed process cannot wedge this invoice shut forever — it
+          // simply becomes collectable again, same as any other stuck attempt
+          // the reconciliation job would pick up.
+          createdAt: { gte: new Date(Date.now() - 2 * 60_000) },
+        },
+      });
+      if (inFlight) {
+        throw new BillingError(
+          "IDEMPOTENCY_REQUEST_IN_PROGRESS",
+          `Invoice ${invoice.invoiceNumber} already has a payment attempt in progress.`
+        );
+      }
+
+      return tx.paymentAttempt.create({
+        data: {
+          id: attemptId,
+          organizationId: params.organizationId,
+          invoiceId: invoice.id,
+          customerId: invoice.customerId,
+          provider: candidate.config.provider,
+          paymentMethodId: paymentMethod?.id ?? null,
+          amount: amount.amount,
+          currency,
+          status: "PROCESSING",
+          attemptNumber,
+          metadata: (params.metadata ?? {}) as never,
+        },
+      });
     });
 
     try {
@@ -313,6 +345,76 @@ export async function applyPaymentResult(
 }
 
 /**
+ * Asks the provider directly what happened to a stuck attempt, instead of
+ * only waiting on a webhook.
+ *
+ * Webhook delivery is best-effort, and some failure shapes never generate one
+ * at all — a decline at authorization, before Paystack ever opens a charge
+ * object, can leave nothing to send an event about. Without an active check,
+ * that attempt sits in PENDING forever: no failure reason, and — left long
+ * enough — the subscription reads as merely abandoned rather than declined
+ * when incomplete-expiry closes it. This reuses applyPaymentResult, the exact
+ * settlement path the webhook handler uses, so a synced attempt is
+ * indistinguishable from one a webhook resolved.
+ *
+ * A terminal attempt is returned as-is; nothing already resolved is ever
+ * re-verified.
+ */
+export async function syncPaymentAttempt(
+  prisma: PrismaClient,
+  deps: ProviderFactoryDeps,
+  params: { organizationId: string; attemptId: string }
+) {
+  const attempt = await prisma.paymentAttempt.findFirst({
+    where: { id: params.attemptId, organizationId: params.organizationId },
+  });
+  if (!attempt) throw BillingError.notFound("PAYMENT_ATTEMPT_NOT_FOUND", "Payment attempt");
+
+  if (attempt.status !== "PENDING" && attempt.status !== "PROCESSING") {
+    return attempt;
+  }
+
+  const stored = await prisma.paymentProviderConfig.findFirst({
+    where: { organizationId: params.organizationId, provider: attempt.provider },
+  });
+  if (!stored) {
+    throw new BillingError(
+      "PROVIDER_CONFIG_NOT_FOUND",
+      `No ${attempt.provider} configuration for this organization.`
+    );
+  }
+
+  const adapter = instantiateProvider(
+    {
+      id: stored.id,
+      organizationId: stored.organizationId,
+      provider: stored.provider as never,
+      environment: stored.environment as "TEST" | "LIVE",
+      encryptedCredentials: stored.encryptedCredentials,
+      enabled: stored.enabled,
+      isDefault: stored.isDefault,
+      priority: stored.priority,
+      routingRules: stored.routingRules,
+    },
+    deps
+  );
+
+  // The attempt id is its own reference — same convention the webhook
+  // handler relies on to resolve an event back to exactly one attempt.
+  const result = await adapter.verifyPayment(attempt.id);
+
+  await applyPaymentResult(prisma, {
+    organizationId: params.organizationId,
+    attemptId: attempt.id,
+    result,
+  });
+
+  const refreshed = await prisma.paymentAttempt.findFirst({ where: { id: attempt.id } });
+  if (!refreshed) throw BillingError.notFound("PAYMENT_ATTEMPT_NOT_FOUND", "Payment attempt");
+  return refreshed;
+}
+
+/**
  * Applies the organization's dunning policy after a failed collection: the
  * subscription moves to PAST_DUE and then into a grace period whose length and
  * access rules come entirely from BillingSettings.
@@ -353,15 +455,29 @@ async function failInvoiceInTransaction(
     select: { createdAt: true },
   });
 
+  // The reason is read from *this* failure, not the first one: a card that
+  // bounced on insufficient funds last week and comes back expired today is a
+  // different fact, and the ladder should react to what just happened.
+  const latestFailure = await tx.paymentAttempt.findFirst({
+    where: { invoiceId: invoice.id, status: "FAILED" },
+    orderBy: { createdAt: "desc" },
+    select: { failureReason: true },
+  });
+  const worthRetrying = isWorthRetrying(classifyFailure(latestFailure?.failureReason));
+
   await tx.invoice.update({
     where: { id: invoice.id },
     data: {
       dunningAttempts: failedAttempts,
-      // `failedAttempts` counts the original charge too, and that was not a
-      // retry. Subtracting it is what makes the first entry in the schedule
-      // reachable: [0, 1, 3, 5] means the first retry is same-day, which is
-      // where most recoveries happen.
-      nextRetryAt: nextRetryAt(policy, firstFailure?.createdAt ?? now, Math.max(failedAttempts - 1, 0)),
+      // A reason nothing will fix by waiting — an expired card, a stolen one —
+      // ends the ladder immediately rather than spending the schedule's four
+      // attempts asking the same dead card again. `null` is the same signal
+      // "retries exhausted" already uses, so the exhausted-dunning email (with
+      // its "update your payment method" link) fires on the very next pass
+      // instead of after days of pointless retries.
+      nextRetryAt: worthRetrying
+        ? nextRetryAt(policy, firstFailure?.createdAt ?? now, Math.max(failedAttempts - 1, 0))
+        : null,
     },
   });
 
