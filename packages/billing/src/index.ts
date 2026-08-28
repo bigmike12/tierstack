@@ -11,3 +11,4 @@ export * from "./subscriptions";
 export * from "./payments";
 export * from "./providers";
 export * from "./prices";
+export * from "./portal";

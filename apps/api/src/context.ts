@@ -21,10 +21,22 @@ export interface UserActor {
 
 export type Actor = ApiKeyActor | UserActor;
 
+/**
+ * Not an `Actor` on purpose. An actor speaks for an organization; a customer
+ * speaks for exactly themselves, and nothing that checks `requireActor` or a
+ * role should ever be satisfiable by a portal token.
+ */
+export interface CustomerActor {
+  customerId: string;
+  organizationId: string;
+  portalSessionId: string;
+}
+
 declare module "fastify" {
   interface FastifyRequest {
     requestId: string;
     actor?: Actor;
+    customer?: CustomerActor;
     /** Resolved tenant. Never read from the request body. */
     organizationId?: string;
     memberRole?: MemberRole;
@@ -39,6 +51,14 @@ export function requireActor(request: FastifyRequest): Actor {
     throw new BillingError("UNAUTHENTICATED", "Authentication is required for this endpoint.");
   }
   return request.actor;
+}
+
+/** The customer a portal token was minted for. Only `/portal/*` routes ever set this. */
+export function requireCustomer(request: FastifyRequest): CustomerActor {
+  if (!request.customer) {
+    throw new BillingError("UNAUTHENTICATED", "A valid portal session is required.");
+  }
+  return request.customer;
 }
 
 /**

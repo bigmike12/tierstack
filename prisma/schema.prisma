@@ -1028,15 +1028,19 @@ model IdempotencyKey {
 }
 
 model PortalSession {
-  id             String    @id
+  id             String         @id
   organizationId String
   customerId     String
-  tokenHash      String    @unique
+  /// The environment of the API key that minted this link. A portal action
+  /// (paying an invoice, say) must route to the same TEST/LIVE rail the
+  /// customer's subscription actually lives on.
+  environment    ApiEnvironment
+  tokenHash      String         @unique
   returnUrl      String?
   expiresAt      DateTime
   usedAt         DateTime?
   revokedAt      DateTime?
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime       @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)

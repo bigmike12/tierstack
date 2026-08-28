@@ -50,6 +50,7 @@ export function registerPortalRoutes(
     const session = await createPortalSession(prisma, {
       organizationId,
       customerId: body.customerId,
+      environment: environmentOf(request),
       returnUrl: body.returnUrl ?? null,
       expiresInMinutes: body.expiresInMinutes,
     });

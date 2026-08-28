@@ -20,6 +20,8 @@ export function hashPortalToken(token: string): string {
 export interface CreatePortalSessionParams {
   organizationId: string;
   customerId: string;
+  /** From the API key that minted this link — a portal action must stay on the same rail the customer's subscription is actually on. */
+  environment: "TEST" | "LIVE";
   returnUrl?: string | null;
   /** Short by default: the link travels by email and sits in an inbox. */
   expiresInMinutes?: number;
@@ -56,6 +58,7 @@ export async function createPortalSession(
       id: newId("portalSession"),
       organizationId: params.organizationId,
       customerId: customer.id,
+      environment: params.environment,
       tokenHash: hashPortalToken(token),
       returnUrl: params.returnUrl ?? null,
       expiresAt,
