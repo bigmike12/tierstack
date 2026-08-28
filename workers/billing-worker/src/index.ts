@@ -1,4 +1,4 @@
-import { loadRootEnv } from "@tierstack/shared";
+import { loadRootEnv, redact } from "@tierstack/shared";
 
 // Load the monorepo .env before anything reads process.env.
 loadRootEnv();
@@ -109,7 +109,10 @@ async function main(): Promise<void> {
   );
 
   worker.on("failed", (job, error) => ctx.log("job failed", { job: job?.name, error: error.message }));
-  worker.on("completed", (job, result) => ctx.log("job completed", { job: job.name, result }));
+  // Every job today only returns counts and ids, so this is currently a no-op
+  // — but nothing stops a future job from returning something richer, and
+  // this is the one place that would log it unexamined.
+  worker.on("completed", (job, result) => ctx.log("job completed", { job: job.name, result: redact(result) }));
 
   const shutdown = async () => {
     await worker.close();
