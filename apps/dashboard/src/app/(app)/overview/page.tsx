@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, PageHeader, Stat } from "@/components/ui/shell";
+import { CustomerCell } from "@/components/customer-cell";
 import { StatusBadge } from "@/components/status-badge";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
@@ -151,9 +152,9 @@ export default async function OverviewPage() {
                 <TBody>
                   {subscriptions.map((sub) => (
                     <TR key={sub.id}>
-                      <TD className="max-w-[180px] truncate">
+                      <TD className="max-w-[200px]">
                         <Link href={`/subscriptions/${sub.id}`} className="underline-offset-4 hover:underline">
-                          {sub.customer?.externalId ?? sub.customer?.email ?? "—"}
+                          <CustomerCell customer={sub.customer} />
                         </Link>
                       </TD>
                       <TD className="text-muted-foreground">{sub.price?.plan?.name ?? "—"}</TD>

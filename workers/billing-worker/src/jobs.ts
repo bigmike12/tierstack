@@ -5,6 +5,7 @@ import {
   expireGracePeriods,
   expireIncompleteSubscriptions,
   renewSubscription,
+  syncPaymentAttempt,
   type ProviderFactoryDeps,
 } from "@tierstack/billing";
 import type { PrismaClient } from "@tierstack/database";
@@ -194,6 +195,61 @@ export async function runIncompleteExpiry(ctx: JobContext, now = new Date()) {
   }
   if (expired.length > 0) ctx.log("abandoned checkouts expired", { count: expired.length });
   return { expired: expired.length };
+}
+
+/**
+ * Actively resolves payment attempts a webhook never settled.
+ *
+ * Webhook delivery is best-effort, and some failure shapes — a decline at
+ * authorization, before the provider ever opens a charge object — never
+ * generate one at all. Left alone, that attempt sits in PENDING indefinitely:
+ * no failure reason recorded, and eventually incomplete-expiry closes the
+ * subscription as merely abandoned rather than declined. A short grace window
+ * avoids racing a checkout the customer is still completing.
+ */
+export async function runPaymentReconciliation(ctx: JobContext, now = new Date(), batchSize = 100) {
+  const staleBefore = new Date(now.getTime() - 5 * 60_000);
+  // Some provider transactions never resolve past "abandoned" — a customer who
+  // declines and simply closes the tab, with nothing left for the provider to
+  // ever finalize. Re-asking one of those forever would just spend an API call
+  // every run for nothing; 24h matches the default incomplete-expiry window,
+  // so this gives up right around when the subscription would anyway.
+  const giveUpBefore = new Date(now.getTime() - 24 * 3_600_000);
+  const stuck = await ctx.prisma.paymentAttempt.findMany({
+    where: {
+      status: { in: ["PENDING", "PROCESSING"] },
+      createdAt: { lte: staleBefore, gte: giveUpBefore },
+    },
+    select: { id: true, organizationId: true },
+    orderBy: { createdAt: "asc" },
+    take: batchSize,
+  });
+
+  let resolved = 0;
+  let stillPending = 0;
+
+  for (const attempt of stuck) {
+    try {
+      const synced = await syncPaymentAttempt(ctx.prisma, ctx.providerDeps, {
+        organizationId: attempt.organizationId,
+        attemptId: attempt.id,
+      });
+      if (synced.status === "PENDING" || synced.status === "PROCESSING") {
+        stillPending += 1;
+      } else {
+        resolved += 1;
+        ctx.log("reconciled a stranded payment attempt", { attemptId: attempt.id, status: synced.status });
+      }
+    } catch (error) {
+      ctx.log("could not reconcile a stranded payment attempt", {
+        attemptId: attempt.id,
+        reason: error instanceof BillingError ? error.code : "unknown",
+      });
+    }
+  }
+
+  if (resolved > 0) ctx.log("payment reconciliation ran", { considered: stuck.length, resolved, stillPending });
+  return { considered: stuck.length, resolved, stillPending };
 }
 
 /** Idempotency records are short-lived by design; this reclaims the space. */

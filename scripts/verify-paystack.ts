@@ -16,6 +16,10 @@
  *   --email <addr>   the customer's email (Paystack sends a receipt there)
  *   --api <url>      API base URL (default: API_URL from .env, or :4000)
  *   --renew          also run an immediate renewal charge after settlement
+ *   --decline        walk a real decline through instead of a real success —
+ *                     checks that nothing gets marked paid, the failure code
+ *                     Paystack actually sends is captured, and the customer
+ *                     can retry
  */
 
 import { createInterface } from "node:readline/promises";
@@ -37,8 +41,14 @@ const KEY = flag("key") ?? process.env.TIERSTACK_API_KEY ?? "";
 const EMAIL = flag("email") ?? `paystack-test-${Date.now()}@gmail.com`;
 const EXTERNAL_ID = `user_paystack_${Date.now()}`;
 const RUN_RENEWAL_CHECK = hasFlag("renew");
+const RUN_DECLINE_CHECK = hasFlag("decline");
 const apiHost = new URL(API).hostname;
 const isLocalApi = ["localhost", "127.0.0.1", "::1"].includes(apiHost);
+
+if (RUN_DECLINE_CHECK && RUN_RENEWAL_CHECK) {
+  console.error("\n--decline and --renew are mutually exclusive: a declined checkout never settles.\n");
+  process.exit(1);
+}
 
 let passed = 0;
 let failed = 0;
@@ -352,16 +362,31 @@ async function main(): Promise<void> {
 
   console.log(`\n  \x1b[1m${payment.checkoutUrl}\x1b[0m\n`);
 
-  console.log("  Paystack test card:");
-  console.log("    4084 0840 8408 4081   CVV 408   any future expiry");
-  console.log("    PIN 0000   OTP 123456\n");
+  if (RUN_DECLINE_CHECK) {
+    console.log("  Paystack test card — declines at authorization, before any OTP step:");
+    console.log("    4084 0800 0000 0409   CVV 408   any future expiry   → \"Do Not Honour\"");
+    console.log("    4084 0800 0000 0005   CVV 408   any future expiry   → \"Insufficient Funds\"\n");
+    console.log(
+      "  Do not use the success card with a wrong OTP — Paystack treats that as a\n" +
+        "  retry, not a failure, so it never fires charge.failed and this attempt\n" +
+        "  will sit PENDING forever.\n"
+    );
+  } else {
+    console.log("  Paystack test card:");
+    console.log("    4084 0840 8408 4081   CVV 408   any future expiry");
+    console.log("    PIN 0000   OTP 123456\n");
+  }
 
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
-  await rl.question("  Press Enter once you have completed (or abandoned) the payment… ");
+  await rl.question(
+    RUN_DECLINE_CHECK
+      ? "  Press Enter once the checkout has declined… "
+      : "  Press Enter once you have completed (or abandoned) the payment… "
+  );
 
   rl.close();
 
@@ -369,41 +394,98 @@ async function main(): Promise<void> {
 
   section("7. Settlement");
 
-  note("polling for up to 90s while the webhook arrives…");
+  note(
+    RUN_DECLINE_CHECK
+      ? "polling for up to 90s while the failure webhook arrives…"
+      : "polling for up to 90s while the webhook arrives…"
+  );
 
   let invoice: any = null;
   let subscription: any = null;
+  let latestAttempt: any = null;
 
   const deadline = Date.now() + 90_000;
 
   while (Date.now() < deadline) {
     invoice = (await api("GET", `/v1/invoices/${invoiceId}`)).data;
     subscription = (await api("GET", `/v1/subscriptions/${subscriptionId}`)).data;
+    latestAttempt = (
+      await api("GET", `/v1/payment-attempts?invoiceId=${invoiceId}&limit=10`)
+    ).data?.items?.[0];
 
-    if (invoice?.status === "PAID" || subscription?.status === "ACTIVE") {
+    if (RUN_DECLINE_CHECK) {
+      if (latestAttempt?.status === "FAILED") break;
+    } else if (invoice?.status === "PAID" || subscription?.status === "ACTIVE") {
       break;
     }
 
     await sleep(3000);
   }
 
-  const settled = check("the invoice is PAID", invoice?.status === "PAID", {
-    status: invoice?.status,
-    amountPaid: invoice?.amountPaid,
-    amountDue: invoice?.amountDue,
-  });
+  let usedSync = false;
 
-  check("the subscription is ACTIVE", subscription?.status === "ACTIVE", subscription?.status);
+  // The webhook is best-effort — it can be lost, or Paystack can simply never
+  // send one for some decline shapes. Nothing should stay stuck in PENDING
+  // just because delivery failed, so ask Paystack directly instead of
+  // treating an unresolved attempt as unrecoverable.
+  if (latestAttempt && (latestAttempt.status === "PENDING" || latestAttempt.status === "PROCESSING")) {
+    note("no webhook resolved it in time — asking Paystack directly via /sync instead…");
+    const synced = await api("POST", `/v1/payment-attempts/${latestAttempt.id}/sync`);
+    if (synced.status >= 200 && synced.status < 300) {
+      usedSync = true;
+      latestAttempt = synced.data;
+      invoice = (await api("GET", `/v1/invoices/${invoiceId}`)).data;
+      subscription = (await api("GET", `/v1/subscriptions/${subscriptionId}`)).data;
+    } else {
+      note(`sync failed: ${JSON.stringify(synced.error ?? synced.data)}`);
+    }
+  }
 
-  if (settled) {
-    check(
-      "the amount collected matches the invoice",
-      invoice.amountPaid === invoice.total,
-      {
-        collected: invoice.amountPaid,
-        invoiced: invoice.total,
-      }
+  let settled = false;
+
+  if (RUN_DECLINE_CHECK) {
+    check("the payment attempt is FAILED", latestAttempt?.status === "FAILED", latestAttempt);
+
+    const gotCode = check(
+      "a failure code was captured",
+      Boolean(latestAttempt?.failureCode),
+      latestAttempt?.failureCode
     );
+    const gotReason = check(
+      "a failure reason was captured",
+      Boolean(latestAttempt?.failureReason),
+      latestAttempt?.failureReason
+    );
+
+    if (gotCode || gotReason) {
+      note(`Paystack said: ${latestAttempt.failureCode ?? "?"} — "${latestAttempt.failureReason ?? "?"}"`);
+    }
+
+    check("the invoice was never marked PAID", invoice?.status !== "PAID", invoice?.status);
+    check(
+      "the subscription never left INCOMPLETE",
+      subscription?.status === "INCOMPLETE",
+      subscription?.status
+    );
+  } else {
+    settled = check("the invoice is PAID", invoice?.status === "PAID", {
+      status: invoice?.status,
+      amountPaid: invoice?.amountPaid,
+      amountDue: invoice?.amountDue,
+    });
+
+    check("the subscription is ACTIVE", subscription?.status === "ACTIVE", subscription?.status);
+
+    if (settled) {
+      check(
+        "the amount collected matches the invoice",
+        invoice.amountPaid === invoice.total,
+        {
+          collected: invoice.amountPaid,
+          invoiced: invoice.total,
+        }
+      );
+    }
   }
 
   // -- 8. The webhook ----------------------------------------------------------
@@ -415,21 +497,31 @@ async function main(): Promise<void> {
   ).data;
 
   const items: any[] = events?.items ?? [];
-  const charge = items.find((e) => e.eventType === "charge.success");
+  const expectedEvent = RUN_DECLINE_CHECK ? "charge.failed" : "charge.success";
+  const charge = items.find((e) => e.eventType === expectedEvent);
 
   if (
     !check(
-      "a charge.success webhook arrived",
+      `a ${expectedEvent} webhook arrived`,
       Boolean(charge),
       items.map((e) => e.eventType)
     )
   ) {
-    console.error(
-      "\n  Nothing arrived from Paystack. The usual causes, in order:\n" +
-        "    · the Test Webhook URL is missing its path — it must end in /webhooks/paystack\n" +
-        "    · the cloudflared tunnel is not running, or its URL changed on restart\n" +
-        "    · the tunnel points somewhere other than http://localhost:4000\n"
-    );
+    if (usedSync) {
+      console.error(
+        "\n  No webhook arrived, but /sync already resolved the attempt correctly above.\n" +
+          "  That means Paystack simply never sent one for this transaction — not a\n" +
+          "  tunnel or endpoint problem. Worth knowing: webhook delivery cannot be\n" +
+          "  assumed reliable even for a definite outcome.\n"
+      );
+    } else {
+      console.error(
+        "\n  Nothing arrived from Paystack. The usual causes, in order:\n" +
+          "    · the Test Webhook URL is missing its path — it must end in /webhooks/paystack\n" +
+          "    · the cloudflared tunnel is not running, or its URL changed on restart\n" +
+          "    · the tunnel points somewhere other than http://localhost:4000\n"
+      );
+    }
   } else {
     check("its signature was verified", charge.signatureVerified === true, charge);
 
@@ -444,7 +536,7 @@ async function main(): Promise<void> {
     );
   }
 
-  if (!settled) {
+  if (!settled && !RUN_DECLINE_CHECK) {
     section("8b. Why it is still unpaid");
 
     const unresolvedAttempts =
@@ -481,7 +573,7 @@ async function main(): Promise<void> {
 
   // -- 9. Tokenization ---------------------------------------------------------
 
-  section("9. The stored card");
+  section(RUN_DECLINE_CHECK ? "9. The stored card (there must not be one)" : "9. The stored card");
 
   const methods =
     (await api("GET", `/v1/payment-methods?customerId=${EXTERNAL_ID}`)).data ?? [];
@@ -490,7 +582,9 @@ async function main(): Promise<void> {
     (m: any) => m.type === "CARD" && m.status === "ACTIVE"
   );
 
-  const tokenized = check("a reusable card was stored", Boolean(card), methods);
+  const tokenized = RUN_DECLINE_CHECK
+    ? !check("no reusable card was stored from the declined charge", !Boolean(card), methods)
+    : check("a reusable card was stored", Boolean(card), methods);
 
   if (tokenized) {
     note(
@@ -509,7 +603,9 @@ async function main(): Promise<void> {
 
   section("10. Renewal with nobody present");
 
-  if (!RUN_RENEWAL_CHECK) {
+  if (RUN_DECLINE_CHECK) {
+    note("skipped — a declined checkout has nothing to renew.");
+  } else if (!RUN_RENEWAL_CHECK) {
     note("skipped — pass --renew to run an immediate stored-card renewal check.");
   } else if (!tokenized || !settled) {
     note("skipped — needs a settled payment with a stored card.");
@@ -546,7 +642,9 @@ async function main(): Promise<void> {
 
   if (failed === 0) {
     console.log(
-      `\x1b[32mAll ${passed} checks passed. Paystack is verified end to end.\x1b[0m`
+      RUN_DECLINE_CHECK
+        ? `\x1b[32mAll ${passed} checks passed. Paystack's decline path is verified end to end.\x1b[0m`
+        : `\x1b[32mAll ${passed} checks passed. Paystack is verified end to end.\x1b[0m`
     );
   } else {
     console.log(

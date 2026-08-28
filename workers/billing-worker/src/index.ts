@@ -12,6 +12,7 @@ import {
   runGraceExpiry,
   runIdempotencySweep,
   runIncompleteExpiry,
+  runPaymentReconciliation,
   runRenewals,
   runSessionSweep,
   type JobContext,
@@ -26,6 +27,7 @@ type JobName =
   | "notifications"
   | "grace-expiry"
   | "incomplete-expiry"
+  | "payment-reconciliation"
   | "idempotency-sweep"
   | "session-sweep";
 
@@ -68,6 +70,13 @@ async function main(): Promise<void> {
   // price-change or trial-ending email is never late by more than a few minutes.
   await queue.upsertJobScheduler("notifications", { pattern: "*/5 * * * *" }, { name: "notifications" });
   await queue.upsertJobScheduler("grace-expiry", { pattern: "*/10 * * * *" }, { name: "grace-expiry" });
+  // Runs ahead of incomplete-expiry so a stranded attempt gets its real
+  // failure reason recorded before the subscription is ever closed as abandoned.
+  await queue.upsertJobScheduler(
+    "payment-reconciliation",
+    { pattern: "*/2 * * * *" },
+    { name: "payment-reconciliation" }
+  );
   await queue.upsertJobScheduler("incomplete-expiry", { pattern: "*/15 * * * *" }, { name: "incomplete-expiry" });
   await queue.upsertJobScheduler("idempotency-sweep", { pattern: "0 * * * *" }, { name: "idempotency-sweep" });
   await queue.upsertJobScheduler("session-sweep", { pattern: "0 3 * * *" }, { name: "session-sweep" });
@@ -86,6 +95,8 @@ async function main(): Promise<void> {
           return runGraceExpiry(ctx);
         case "incomplete-expiry":
           return runIncompleteExpiry(ctx);
+        case "payment-reconciliation":
+          return runPaymentReconciliation(ctx);
         case "idempotency-sweep":
           return runIdempotencySweep(ctx);
         case "session-sweep":

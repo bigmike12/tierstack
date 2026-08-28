@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@tierstack/database";
-import { attemptInvoicePayment, voidInvoice } from "@tierstack/billing";
+import { attemptInvoicePayment, syncPaymentAttempt, voidInvoice } from "@tierstack/billing";
 import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -219,5 +219,18 @@ export function registerInvoiceRoutes(
     ]);
 
     return success(paginated(items, page, total), request.requestId);
+  });
+
+  /**
+   * Asks the provider directly what happened to an attempt, instead of only
+   * waiting on a webhook that may never arrive for some failure shapes.
+   */
+  app.post("/v1/payment-attempts/:attemptId/sync", async (request) => {
+    const organizationId = requireOrganization(request);
+    requireSecretKeyOrUser(request);
+    const { attemptId } = request.params as { attemptId: string };
+
+    const synced = await syncPaymentAttempt(prisma, providerDeps, { organizationId, attemptId });
+    return success(synced, request.requestId);
   });
 }

@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CustomerCell } from "@/components/customer-cell";
 import { StatusBadge } from "@/components/status-badge";
 import { Pagination } from "@/components/ui/pagination";
-import { EmptyState, Mono, PageHeader } from "@/components/ui/shell";
+import { EmptyState, PageHeader } from "@/components/ui/shell";
 import { SearchInput } from "@/components/ui/table-toolbar";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
@@ -79,13 +80,9 @@ export default async function SubscriptionsPage({
             <TBody>
               {result.items.map((sub) => (
                 <TR key={sub.id}>
-                  <TD className="max-w-[200px] truncate">
+                  <TD className="max-w-[220px]">
                     <Link href={`/subscriptions/${sub.id}`} className="underline-offset-4 hover:underline">
-                      {sub.customer?.externalId ? (
-                        <Mono>{sub.customer.externalId}</Mono>
-                      ) : (
-                        sub.customer?.email ?? "—"
-                      )}
+                      <CustomerCell customer={sub.customer} />
                     </Link>
                   </TD>
                   <TD>
