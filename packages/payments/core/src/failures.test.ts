@@ -33,12 +33,14 @@ describe("classifyFailure", () => {
 
   it("is case and punctuation insensitive", () => {
     expect(classifyFailure("  EXPIRED CARD.  ")).toBe("REQUIRES_ACTION");
+    expect(classifyFailure("INSUFFICIENT FUNDS.")).toBe("RETRYABLE");
   });
 
   it("returns UNKNOWN rather than guessing", () => {
     expect(classifyFailure("Rail said something nobody has seen before")).toBe("UNKNOWN");
     expect(classifyFailure("")).toBe("UNKNOWN");
     expect(classifyFailure(null)).toBe("UNKNOWN");
+    expect(classifyFailure(undefined)).toBe("UNKNOWN");
   });
 });
 
@@ -47,6 +49,7 @@ describe("isWorthRetrying", () => {
     expect(isWorthRetrying("RETRYABLE")).toBe(true);
     expect(isWorthRetrying("UNKNOWN")).toBe(true);
     expect(isWorthRetrying(null)).toBe(true);
+    expect(isWorthRetrying(undefined)).toBe(true);
   });
 
   it("stops on a card that needs replacing", () => {
