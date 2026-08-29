@@ -485,7 +485,7 @@ const core: DocPage[] = [
     summary: "Attempts, stored methods, routing, and what happens when a webhook never comes.",
     blocks: [
       { kind: "endpoint", method: "GET", path: "/v1/payment-attempts", summary: "Every attempt, with its failure reason." },
-      { kind: "endpoint", method: "POST", path: "/v1/payment-attempts/:attemptId/reconcile", summary: "Ask the provider what really happened." },
+      { kind: "endpoint", method: "POST", path: "/v1/payment-attempts/:attemptId/sync", summary: "Ask the provider what really happened." },
       { kind: "endpoint", method: "GET", path: "/v1/payment-methods" },
       { kind: "endpoint", method: "DELETE", path: "/v1/payment-methods/:paymentMethodId" },
       { kind: "endpoint", method: "GET", path: "/v1/payment-providers" },
@@ -544,21 +544,19 @@ const metering: DocPage[] = [
       },
       {
         kind: "prose",
-        text: "An explicit entitlement is an exception for one customer or one subscription, and the most specific rule wins. That is the case that breaks every home-made version of this: the one company you granted something to by hand.",
+        text: "An explicit entitlement is an exception for one customer or one subscription, and the most specific rule wins: a customer override beats a subscription entitlement, which beats a plan entitlement, which beats the plan's own feature flags. That is the case that breaks every home-made version of this: the one company you granted something to by hand.",
       },
       {
         kind: "code",
         code: `POST /v1/entitlements/check
 
-{ "customerId": "user_83921", "feature": "export_pdf" }
+{ "customerId": "user_83921", "featureKey": "export_pdf" }
 
 {
   "data": {
-    "allowed": false,
-    "limit": null,
-    "used": null,
-    "remaining": null,
-    "reason": "Turned off on this plan"
+    "access": false,
+    "remainingQuota": null,
+    "reason": "FEATURE_DISABLED"
   },
   "error": null,
   "requestId": "req_…"
@@ -567,6 +565,44 @@ const metering: DocPage[] = [
       {
         kind: "note",
         text: "The answer accounts for subscription state. A customer inside a grace period is answered according to the access level your grace policy had when they lapsed — not the one you configured afterwards.",
+      },
+      { kind: "heading", text: "Setting feature flags on a plan" },
+      {
+        kind: "prose",
+        text: "The dashboard's Feature flags field on a plan is plain text, one flag per line — not JSON. Each line is typed by what it looks like, the same rule the resolver above applies:",
+      },
+      {
+        kind: "code",
+        code: `api_access
+seats=10
+projects=unlimited
+exports=false
+support=priority`,
+      },
+      {
+        kind: "table",
+        head: ["Line", "Stored as", "Becomes"],
+        rows: [
+          ["`api_access`", "`true`", "`BOOLEAN`, granted"],
+          ["`exports=false`", "`false`", "`BOOLEAN`, denied"],
+          ["`seats=10`", "`10`", "`LIMIT` — a ceiling. See the note below."],
+          ["`projects=unlimited`", "`\"unlimited\"`", "`UNLIMITED` — no ceiling"],
+          ["`support=priority`", "`\"priority\"`", "`BOOLEAN`, granted — the string itself is not evaluated"],
+        ],
+      },
+      {
+        kind: "note",
+        tone: "warn",
+        text: "A string value that isn't \"unlimited\" becomes a granted boolean — the value is a label, not a gate. Checking `support` on a plan with `support=priority` and one with `support=community` both return `access: true`; neither response tells you which string it was. If your code needs to branch on the tier, give each tier its own boolean line (`priority_support`) instead of encoding it as a value your application has to string-compare.",
+      },
+      {
+        kind: "note",
+        tone: "warn",
+        text: "A LIMIT flag like `seats=10` is a ceiling your application counts against, not a meter Tierstack tracks. A check against it always reports `used: 0` unless the same feature key is also wired to a usage meter through an explicit entitlement — otherwise, query your own database for the current count and compare it to `limit` yourself.",
+      },
+      {
+        kind: "note",
+        text: "Feature flags are not versioned the way prices are. Editing a plan's flags changes what every subscriber on that plan is entitled to immediately — there is no grandfathering. To change flags for new signups only, publish a new plan rather than editing the one existing customers are on.",
       },
     ],
   },
@@ -657,8 +693,9 @@ const customerFacing: DocPage[] = [
   {
     slug: "webhooks",
     title: "Webhooks",
-    summary: "Provider events coming in — and an honest note about events going out.",
+    summary: "Provider events coming in, and your own application's events going out.",
     blocks: [
+      { kind: "heading", text: "Events coming in, from a provider" },
       {
         kind: "prose",
         text: "Each provider posts to its own path. Point the provider's webhook configuration at the matching URL.",
@@ -679,10 +716,56 @@ POST https://your-api.example.com/webhooks/mock`,
           "Applying a payment result is idempotent per attempt — a redelivery is acknowledged and ignored, never applied twice.",
         ],
       },
+      { kind: "heading", text: "Events going out, to your own application" },
+      {
+        kind: "prose",
+        text: "A small, curated set of lifecycle events — the ones almost every integration needs to react to, not a 1:1 mirror of every internal state transition.",
+      },
+      {
+        kind: "table",
+        head: ["Event", "Fires when"],
+        rows: [
+          ["`subscription.created`", "A subscription is created — trialing or owing its first invoice."],
+          ["`subscription.activated`", "A subscription's first payment (or a renewal after lapsing) settles."],
+          ["`subscription.canceled`", "A subscription actually reaches `CANCELED` — immediately, or at the end of a scheduled period."],
+          ["`invoice.paid`", "An invoice is fully paid."],
+          ["`invoice.payment_failed`", "A payment attempt on an invoice fails, on the first attempt or any retry."],
+        ],
+      },
+      { kind: "endpoint", method: "POST", path: "/v1/webhook-endpoints", summary: "Register a URL. The signing secret is returned once." },
+      { kind: "endpoint", method: "GET", path: "/v1/webhook-endpoints" },
+      { kind: "endpoint", method: "PATCH", path: "/v1/webhook-endpoints/:endpointId", summary: "Change the URL, or disable it." },
+      { kind: "endpoint", method: "DELETE", path: "/v1/webhook-endpoints/:endpointId" },
+      { kind: "endpoint", method: "GET", path: "/v1/webhook-deliveries", summary: "The delivery log — filter with `endpointId` or `status`." },
+      { kind: "endpoint", method: "POST", path: "/v1/webhook-deliveries/:deliveryId/resend", summary: "Retry now, including one that already gave up." },
+      { kind: "heading", text: "Verifying a delivery" },
+      {
+        kind: "prose",
+        text: "Every delivery carries `Tierstack-Signature` and `Tierstack-Timestamp` headers — an HMAC-SHA256 of `${timestamp}.${body}`, keyed with the secret returned when the endpoint was created. This is the exact scheme this platform uses to verify a provider's own webhooks; verify a delivery from it the same way.",
+      },
+      {
+        kind: "code",
+        code: `const expected = createHmac("sha256", secret)
+  .update(\`\${timestamp}.\${rawBody}\`)
+  .digest("hex");
+
+if (!timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
+  return res.status(400).send("invalid signature");
+}`,
+      },
       {
         kind: "note",
-        tone: "warn",
-        text: "Outbound webhooks do not exist yet. Provider events come in; nothing is sent out to your application. If you need to react to a billing event today, poll the relevant endpoint or read the subscription's transitions.",
+        text: "The secret is shown exactly once, in the response to creating the endpoint — only its ciphertext is ever stored. Losing it means registering a new endpoint, the same as a lost API key.",
+      },
+      { kind: "heading", text: "Delivery and retries" },
+      {
+        kind: "list",
+        items: [
+          "The first attempt happens within about a minute of the event — this is a polling worker, not an instant push.",
+          "A failed attempt (a non-2xx response, a timeout, an unreachable host) retries at 1 min, 5 min, 30 min, 2 hours, then 6 hours — five attempts in total before the delivery is marked FAILED.",
+          "A FAILED delivery is not permanent — POST to its resend endpoint to try again immediately.",
+          "Endpoints are not yet scoped to test versus live mode — a registered endpoint receives events from both. Filter on your side if that matters to you today.",
+        ],
       },
     ],
   },

@@ -15,6 +15,7 @@ import {
   runPaymentReconciliation,
   runRenewals,
   runSessionSweep,
+  runWebhookDeliveries,
   type JobContext,
 } from "./jobs";
 import { runNotifications, type NotificationContext } from "./notifications";
@@ -28,6 +29,7 @@ type JobName =
   | "grace-expiry"
   | "incomplete-expiry"
   | "payment-reconciliation"
+  | "webhook-deliveries"
   | "idempotency-sweep"
   | "session-sweep";
 
@@ -78,6 +80,13 @@ async function main(): Promise<void> {
     { name: "payment-reconciliation" }
   );
   await queue.upsertJobScheduler("incomplete-expiry", { pattern: "*/15 * * * *" }, { name: "incomplete-expiry" });
+  // A developer's own app reacting to a subscription or invoice event is the
+  // point of this one — runs every minute so delivery is close to real-time.
+  await queue.upsertJobScheduler(
+    "webhook-deliveries",
+    { pattern: "* * * * *" },
+    { name: "webhook-deliveries" }
+  );
   await queue.upsertJobScheduler("idempotency-sweep", { pattern: "0 * * * *" }, { name: "idempotency-sweep" });
   await queue.upsertJobScheduler("session-sweep", { pattern: "0 3 * * *" }, { name: "session-sweep" });
 
@@ -97,6 +106,8 @@ async function main(): Promise<void> {
           return runIncompleteExpiry(ctx);
         case "payment-reconciliation":
           return runPaymentReconciliation(ctx);
+        case "webhook-deliveries":
+          return runWebhookDeliveries(ctx);
         case "idempotency-sweep":
           return runIdempotencySweep(ctx);
         case "session-sweep":

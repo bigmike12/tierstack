@@ -22,6 +22,7 @@ import { instantiateProvider, resolveProviders, type ProviderFactoryDeps } from 
 import { loadDunningPolicy } from "./settings";
 import { applyTransition } from "./transitions";
 import type { SubscriptionStatus } from "./state-machine";
+import { dispatchWebhookEvent } from "./webhooks-outbound";
 
 export interface AttemptPaymentParams {
   organizationId: string;
@@ -325,6 +326,20 @@ export async function applyPaymentResult(
       result.paidAt ?? new Date()
     );
 
+    if (paidInvoice.status === "PAID") {
+      await dispatchWebhookEvent(tx, {
+        organizationId: params.organizationId,
+        eventType: "INVOICE_PAID",
+        data: {
+          invoiceId: invoice.id,
+          subscriptionId: invoice.subscriptionId,
+          customerId: invoice.customerId,
+          amountPaid: paidInvoice.amountPaid,
+          currency: invoice.currency,
+        },
+      });
+    }
+
     let subscriptionStatus: SubscriptionStatus | undefined;
     if (invoice.subscription && paidInvoice.status === "PAID") {
       const current = invoice.subscription.status as SubscriptionStatus;
@@ -335,6 +350,15 @@ export async function applyPaymentResult(
           gracePolicy: null,
         });
         subscriptionStatus = "ACTIVE";
+        await dispatchWebhookEvent(tx, {
+          organizationId: params.organizationId,
+          eventType: "SUBSCRIPTION_ACTIVATED",
+          data: {
+            subscriptionId: invoice.subscription.id,
+            customerId: invoice.customerId,
+            status: "ACTIVE",
+          },
+        });
       } else {
         subscriptionStatus = current;
       }
@@ -464,6 +488,18 @@ async function failInvoiceInTransaction(
     select: { failureReason: true },
   });
   const worthRetrying = isWorthRetrying(classifyFailure(latestFailure?.failureReason));
+
+  await dispatchWebhookEvent(tx, {
+    organizationId: params.organizationId,
+    eventType: "INVOICE_PAYMENT_FAILED",
+    data: {
+      invoiceId: invoice.id,
+      subscriptionId: invoice.subscriptionId,
+      customerId: invoice.customerId,
+      failureReason: latestFailure?.failureReason ?? null,
+      willRetry: worthRetrying,
+    },
+  });
 
   await tx.invoice.update({
     where: { id: invoice.id },

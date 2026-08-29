@@ -34,6 +34,8 @@ export const ID_PREFIXES = {
   referral: "ref",
   credit: "cr",
   webhookEvent: "whe",
+  webhookEndpoint: "whep",
+  webhookDelivery: "whd",
   emailMessage: "em",
   idempotency: "idem",
   portalSession: "ps",
