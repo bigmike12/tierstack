@@ -26,3 +26,11 @@ dump.rdb
 # Local TypeScript build info.
 *.tsbuildinfo
 .DS_Store
+
+# Python (packages/sdk-python)
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/

@@ -92,6 +92,8 @@ model Organization {
   referrals       Referral[]
   creditEntries   CreditLedgerEntry[]
   webhookEvents   WebhookEvent[]
+  webhookEndpoints  WebhookEndpoint[]
+  webhookDeliveries WebhookDelivery[]
   idempotencyKeys IdempotencyKey[]
   portalSessions  PortalSession[]
   auditLogs       AuditLog[]
@@ -999,6 +1001,69 @@ model WebhookEvent {
   @@unique([organizationId, provider, providerEventId])
   @@index([status, receivedAt])
   @@map("webhook_events")
+}
+
+/// The event types a developer's own application can subscribe to. Deliberately
+/// a small, curated set for this first pass — every lifecycle moment almost
+/// every integration needs to react to, not a 1:1 mirror of every internal
+/// state transition.
+enum OutboundWebhookEventType {
+  SUBSCRIPTION_CREATED
+  SUBSCRIPTION_ACTIVATED
+  SUBSCRIPTION_CANCELED
+  INVOICE_PAID
+  INVOICE_PAYMENT_FAILED
+}
+
+model WebhookEndpoint {
+  id             String   @id
+  organizationId String
+  url            String
+  /// AES-256-GCM ciphertext of the signing secret. This cannot be a hash the
+  /// way an API key is — the plaintext is needed every time an outgoing
+  /// delivery is signed, not just compared against once.
+  encryptedSecret String
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  disabledAt     DateTime?
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([organizationId])
+  @@map("webhook_endpoints")
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model WebhookDelivery {
+  id             String                   @id
+  organizationId String
+  endpointId     String
+  eventType      OutboundWebhookEventType
+  /// The exact JSON body sent. Kept so a delivery can be inspected or resent
+  /// without recomputing it from whatever the current row state happens to be.
+  payload        Json
+  status         WebhookDeliveryStatus    @default(PENDING)
+  attempts       Int                      @default(0)
+  nextAttemptAt  DateTime
+  lastAttemptAt  DateTime?
+  responseStatus Int?
+  /// Truncated — this is for a developer to see what their endpoint said back,
+  /// not a general-purpose log store.
+  responseBody   String?
+  createdAt      DateTime                 @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  endpoint     WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([organizationId, createdAt])
+  @@map("webhook_deliveries")
 }
 
 enum IdempotencyStatus {

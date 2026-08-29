@@ -195,6 +195,8 @@ PostgreSQL       Provider adapters ──► Paystack · Monnify · Flutterwave 
 | `apps/api` | HTTP surface, authentication, tenancy, idempotency, mock checkout page, webhook intake |
 | `apps/dashboard` | Next.js App Router operator UI: auth, the section-57 navigation, and a page per capability |
 | `workers/billing-worker` | Renewals, grace expiry, payment reconciliation, idempotency and session sweeps (BullMQ) |
+| `packages/sdk-node` (`@tierstack/node`) | Official Node/TypeScript client. Zero runtime dependencies, published standalone — not a workspace dependency of anything else in this repo |
+| `packages/sdk-python` (`tierstack`) | Official Python client, `>=3.9`. Standard-library HTTP only (`urllib`) — no `requests`. Not part of the yarn/turbo pipeline; has its own `pyproject.toml` |
 
 ---
 
@@ -491,8 +493,34 @@ Recommended order:
    and nothing is stuck in PENDING forever) is now proven.
 2. **Coupons.** The tables, the `COUPON` line type and negative-line arithmetic
    already exist, so it is the cheapest growth feature to finish.
-3. **SDKs and `/llms.txt`**, then a second real provider — "provider-agnostic"
-   is untested until the router has failed over between two live rails.
+3. ~~SDKs and `/llms.txt`~~ **Done.** Two official SDKs, both covering
+   customers, plans/prices, subscriptions, invoices and payment attempts, both
+   verified against the live local API rather than just typechecked:
+   - `@tierstack/node` (`packages/sdk-node`) — TypeScript, zero runtime
+     dependencies, throws `TierstackError` instead of an envelope to unwrap.
+   - `tierstack` (`packages/sdk-python`) — Python 3.9+, also zero runtime
+     dependencies (`urllib`, not `requests`), same `TierstackError` shape.
+     Passes `mypy --strict` and `ruff` clean.
+
+   `apps/site/public/llms.txt` is live, built from the same docs content the
+   site renders — which also caught one real doc/code drift along the way
+   (`/v1/payment-attempts/:attemptId/reconcile` was documented but the actual
+   route is `/sync`; fixed in `content.ts`).
+4. ~~Outbound webhooks~~ **Done, first pass.** `/v1/webhook-endpoints` +
+   `/v1/webhook-deliveries` — a developer's own application can now register a
+   URL and receive `subscription.created`/`activated`/`canceled` and
+   `invoice.paid`/`payment_failed`, HMAC-signed the same way this platform
+   verifies a provider's webhooks (`Tierstack-Signature`/`Tierstack-Timestamp`
+   over `${timestamp}.${body}`). A BullMQ job (`webhook-deliveries`, every
+   minute) delivers and retries on backoff (1 min → 5 min → 30 min → 2h → 6h,
+   five attempts). All five event types proven live end-to-end — registered a
+   real endpoint, triggered each event through the real code paths, confirmed
+   the signature independently, watched delivery land as `DELIVERED`. Known
+   gap, stated in the docs rather than hidden: endpoints are not yet scoped to
+   TEST versus LIVE — one registered endpoint gets both. No dashboard UI yet
+   either; this pass is API-only, deliberately, per how it was scoped.
+5. **A second real provider** — "provider-agnostic" is untested until the
+   router has failed over between two live rails.
 
 Also needed before launch: a platform back-office for Tierstack itself, and an
 NDPR/PCI scope review.

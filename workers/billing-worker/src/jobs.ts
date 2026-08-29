@@ -1,10 +1,13 @@
 import {
   applyTransition,
   attemptInvoicePayment,
+  decryptEndpointSecret,
   loadBillingSettings,
   expireGracePeriods,
   expireIncompleteSubscriptions,
+  recordDeliveryAttempt,
   renewSubscription,
+  signOutboundWebhook,
   syncPaymentAttempt,
   type ProviderFactoryDeps,
 } from "@tierstack/billing";
@@ -250,6 +253,101 @@ export async function runPaymentReconciliation(ctx: JobContext, now = new Date()
 
   if (resolved > 0) ctx.log("payment reconciliation ran", { considered: stuck.length, resolved, stillPending });
   return { considered: stuck.length, resolved, stillPending };
+}
+
+/**
+ * Delivers outbound webhooks: subscription and invoice lifecycle events, sent
+ * to whatever endpoints a developer has registered for their own organization.
+ *
+ * A delivery is signed the same way Paystack signs the webhooks this platform
+ * receives — HMAC-SHA256 over `${timestamp}.${body}` — so a developer verifies
+ * it the same way this platform verifies a provider. Nothing about a slow or
+ * unreachable endpoint feeds back into the billing operation that triggered
+ * the event; that already committed before this job ever runs.
+ */
+export async function runWebhookDeliveries(ctx: JobContext, now = new Date(), batchSize = 100) {
+  const due = await ctx.prisma.webhookDelivery.findMany({
+    where: { status: "PENDING", nextAttemptAt: { lte: now } },
+    include: { endpoint: true },
+    orderBy: { nextAttemptAt: "asc" },
+    take: batchSize,
+  });
+
+  let delivered = 0;
+  let failed = 0;
+  let retrying = 0;
+
+  for (const delivery of due) {
+    if (!delivery.endpoint.enabled) {
+      // Disabled after the delivery was queued — nothing to send it to.
+      await recordDeliveryAttempt(ctx.prisma, {
+        deliveryId: delivery.id,
+        ok: false,
+        responseStatus: null,
+        responseBody: "Endpoint disabled.",
+      });
+      failed += 1;
+      continue;
+    }
+
+    try {
+      const secret = await decryptEndpointSecret(delivery.endpoint.encryptedSecret, delivery.organizationId);
+      const body = JSON.stringify(delivery.payload);
+      const timestamp = Math.floor(now.getTime() / 1000);
+      const signature = signOutboundWebhook(secret, timestamp, body);
+
+      const response = await fetch(delivery.endpoint.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "tierstack-signature": signature,
+          "tierstack-timestamp": String(timestamp),
+        },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      const ok = response.status >= 200 && response.status < 300;
+      const responseBody = await response.text().catch(() => "");
+      await recordDeliveryAttempt(ctx.prisma, {
+        deliveryId: delivery.id,
+        ok,
+        responseStatus: response.status,
+        responseBody,
+        now,
+      });
+
+      if (ok) delivered += 1;
+      else {
+        const refreshed = await ctx.prisma.webhookDelivery.findUnique({ where: { id: delivery.id } });
+        if (refreshed?.status === "FAILED") failed += 1;
+        else retrying += 1;
+      }
+    } catch (error) {
+      // Network failure, DNS failure, timeout — the endpoint never got a
+      // chance to respond either way, and that is not different from a bad
+      // response for retry purposes.
+      await recordDeliveryAttempt(ctx.prisma, {
+        deliveryId: delivery.id,
+        ok: false,
+        responseStatus: null,
+        responseBody: error instanceof Error ? error.message : "Delivery failed.",
+        now,
+      });
+      const refreshed = await ctx.prisma.webhookDelivery.findUnique({ where: { id: delivery.id } });
+      if (refreshed?.status === "FAILED") failed += 1;
+      else retrying += 1;
+      ctx.log("webhook delivery attempt failed", {
+        deliveryId: delivery.id,
+        reason: error instanceof BillingError ? error.code : "unknown",
+      });
+    }
+  }
+
+  if (due.length > 0) {
+    ctx.log("webhook deliveries ran", { considered: due.length, delivered, retrying, failed });
+  }
+  return { considered: due.length, delivered, retrying, failed };
 }
 
 /** Idempotency records are short-lived by design; this reclaims the space. */

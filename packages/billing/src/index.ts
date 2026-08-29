@@ -12,3 +12,4 @@ export * from "./payments";
 export * from "./providers";
 export * from "./prices";
 export * from "./portal";
+export * from "./webhooks-outbound";

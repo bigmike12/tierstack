@@ -25,6 +25,7 @@ import { registerPaymentProviderRoutes } from "./routes/payment-providers";
 import { registerPortalRoutes } from "./routes/portal";
 import { registerSubscriptionRoutes } from "./routes/subscriptions";
 import { registerUsageRoutes } from "./routes/usage";
+import { registerWebhookEndpointRoutes } from "./routes/webhook-endpoints";
 import { registerWebhookEventRoutes, registerWebhookRoutes } from "./routes/webhooks";
 
 export interface BuiltServer {
@@ -122,6 +123,7 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
   registerMockRoutes(app, prisma, config, redis);
   registerWebhookRoutes(app, prisma, config, redis);
   registerWebhookEventRoutes(app, prisma);
+  registerWebhookEndpointRoutes(app, prisma);
 
   app.addHook("onClose", async () => {
     await prisma.$disconnect();

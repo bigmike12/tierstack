@@ -1,0 +1,32 @@
+# Tierstack
+
+> Tierstack is a subscription billing engine that sits between a product and its payment provider: plans, prices, subscriptions, invoices, entitlements, usage metering, dunning, and a customer-facing billing portal, all behind one JSON API.
+
+Tierstack is the billing system of record — no payment provider is canonical, and provider identifiers are stored as references only. Money is always an integer in the currency's smallest unit, paired with its currency; nothing in the billing path does decimal arithmetic on money. Every response uses one envelope, `{ data, error, requestId }`, and every list endpoint returns the same page shape, `{ items, page, limit, total, totalPages }`. Card data never reaches Tierstack's own servers — checkout is always hosted at the payment provider, and only a provider reference, a card's last four digits, and its expiry are ever stored.
+
+## Docs
+
+- [Quickstart](https://gettierstack.com/docs/quickstart): A customer, a subscription and an entitlement check, in three calls.
+- [Authentication](https://gettierstack.com/docs/authentication): Secret keys, environments, and the two kinds of caller.
+- [Responses and errors](https://gettierstack.com/docs/responses-and-errors): One envelope for everything, and the codes you can switch on.
+- [Idempotency](https://gettierstack.com/docs/idempotency): How to retry a charge without charging twice.
+- [Money and intervals](https://gettierstack.com/docs/money): Integers in minor units, and how a billing period is described.
+- [Customers](https://gettierstack.com/docs/customers): Who you bill, keyed by your own id.
+- [Plans and prices](https://gettierstack.com/docs/plans-and-prices): What you sell, what it costs, and what happens when that changes.
+- [Subscriptions](https://gettierstack.com/docs/subscriptions): The lifecycle, the states, and every way to change one.
+- [Invoices](https://gettierstack.com/docs/invoices): What is owed, what was paid, and every attempt in between.
+- [Payments and providers](https://gettierstack.com/docs/payments): Attempts, stored methods, routing, and what happens when a webhook never comes.
+- [Entitlements](https://gettierstack.com/docs/entitlements): One question an application asks, and a straight answer with a reason.
+- [Usage metering](https://gettierstack.com/docs/usage): Record events, define allowances, bill the overage.
+- [Customer portal](https://gettierstack.com/docs/customer-portal): A page customers use to fix their own billing.
+- [Webhooks](https://gettierstack.com/docs/webhooks): Provider events coming in, verified and de-duplicated.
+- [Testing](https://gettierstack.com/docs/testing): The mock rail, and how to force a decline.
+
+## SDKs
+
+- [Node.js / TypeScript](https://www.npmjs.com/package/@tierstack/node): The official client — `npm install @tierstack/node`. One class, one method per endpoint, throws a typed error instead of returning an envelope to unwrap.
+
+## Optional
+
+- [gettierstack.com](https://gettierstack.com): Product tour and what's built so far.
+- [Status](https://gettierstack.com/status): What's implemented today versus planned.

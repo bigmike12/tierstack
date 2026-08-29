@@ -26,6 +26,7 @@ import { canRollForward, resolveCurrentPrice } from "./prices";
 import { loadBillingSettings, loadDunningPolicy } from "./settings";
 import { applyTransition, recordInitialStatus } from "./transitions";
 import type { SubscriptionStatus } from "./state-machine";
+import { dispatchWebhookEvent } from "./webhooks-outbound";
 
 export interface CreateSubscriptionParams {
   organizationId: string;
@@ -144,6 +145,12 @@ export async function createSubscription(
       trialDays > 0 ? "trial_started" : "subscription_created"
     );
 
+    await dispatchWebhookEvent(tx, {
+      organizationId: params.organizationId,
+      eventType: "SUBSCRIPTION_CREATED",
+      data: { subscriptionId: subscription.id, customerId: customer.id, status, priceId: price.id },
+    });
+
     if (trialDays > 0) {
       return {
         subscriptionId: subscription.id,
@@ -179,6 +186,22 @@ export async function createSubscription(
     // A zero-value first invoice (100% coupon, full credit) settles on the spot.
     if (finalized.status === "PAID") {
       await applyTransition(tx, subscription.id, status, "ACTIVE", "invoice_settled_at_zero");
+      await dispatchWebhookEvent(tx, {
+        organizationId: params.organizationId,
+        eventType: "SUBSCRIPTION_ACTIVATED",
+        data: { subscriptionId: subscription.id, customerId: customer.id, status: "ACTIVE" },
+      });
+      await dispatchWebhookEvent(tx, {
+        organizationId: params.organizationId,
+        eventType: "INVOICE_PAID",
+        data: {
+          invoiceId: finalized.id,
+          subscriptionId: subscription.id,
+          customerId: customer.id,
+          amountPaid: 0,
+          currency,
+        },
+      });
       return {
         subscriptionId: subscription.id,
         customerId: customer.id,
@@ -238,6 +261,11 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       await applyTransition(tx, subscription.id, status, "CANCELED", "cancel_at_period_end", {
         canceledAt: now,
         endedAt: subscription.currentPeriodEnd,
+      });
+      await dispatchWebhookEvent(tx, {
+        organizationId: subscription.organizationId,
+        eventType: "SUBSCRIPTION_CANCELED",
+        data: { subscriptionId: subscription.id, customerId: subscription.customerId, status: "CANCELED" },
       });
       return { renewed: false as const, invoiceId: null };
     }
@@ -645,11 +673,17 @@ export async function cancelSubscription(
       return updated;
     }
 
-    return applyTransition(tx, subscription.id, status, "CANCELED", "canceled_immediately", {
+    const result = await applyTransition(tx, subscription.id, status, "CANCELED", "canceled_immediately", {
       canceledAt: now,
       endedAt: now,
       cancelAtPeriodEnd: false,
     });
+    await dispatchWebhookEvent(tx, {
+      organizationId: params.organizationId,
+      eventType: "SUBSCRIPTION_CANCELED",
+      data: { subscriptionId: subscription.id, customerId: subscription.customerId, status: "CANCELED" },
+    });
+    return result;
   });
 }
 
