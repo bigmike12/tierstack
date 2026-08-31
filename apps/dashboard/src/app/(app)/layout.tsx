@@ -20,7 +20,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const current = organizations[0];
 
   return (
-    <div className="flex h-dvh overflow-hidden">
+    // Pinned to the viewport rather than sized to it: a dvh vs. body-height
+    // rounding mismatch would otherwise make body itself scrollable, showing
+    // blank space below the shell that neither of its own scroll regions has.
+    <div className="fixed inset-0 flex overflow-hidden">
       <div className="hidden w-60 shrink-0 flex-col border-r border-border bg-card/60 md:flex">
         <div className="flex h-14 shrink-0 items-center border-b border-border px-5">
           <Link href="/overview" className="min-w-0 text-sm">

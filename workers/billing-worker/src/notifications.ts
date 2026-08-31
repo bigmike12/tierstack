@@ -44,6 +44,7 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
   const orgCache = new Map<string, { id: string; name: string }>();
   let sent = 0;
   let considered = 0;
+  let exhausted = 0;
 
   async function settingsFor(organizationId: string) {
     const cached = settingsCache.get(organizationId);
@@ -84,7 +85,7 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
       ctx.transport,
       {
         ...params,
-        from: branding.emailSender,
+        from: settings.emailSender ?? branding.emailSender,
         fromName: settings.senderName ?? org.name,
         replyTo: settings.supportEmail ?? null,
         enabled: settings.notificationsEnabled,
@@ -92,6 +93,7 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
       now
     );
     if (result.sent) sent += 1;
+    if (!result.sent && result.reason === "EXHAUSTED") exhausted += 1;
     return result;
   }
 
@@ -317,7 +319,7 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
   }
 
   if (sent > 0) ctx.log("customer email sent", { sent, considered });
-  return { considered, sent };
+  return { considered, sent, exhausted };
 }
 
 function outcomeFor(status: string | undefined): "UNPAID" | "CANCELED" | "PAUSED" {

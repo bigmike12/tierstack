@@ -179,7 +179,7 @@ export async function createSubscription(
       billingPeriodStart: period.start,
       billingPeriodEnd: period.end,
       invoiceDueDays: settings.invoiceDueDays,
-      invoiceNumberPrefix: branding.invoiceNumberPrefix,
+      invoiceNumberPrefix: settings.invoiceNumberPrefix ?? branding.invoiceNumberPrefix,
     });
     const finalized = await finalizeInvoice(tx, invoice.id, settings.invoiceDueDays);
 
@@ -365,7 +365,7 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       billingPeriodStart: periodStart,
       billingPeriodEnd: periodEnd,
       invoiceDueDays: settings.invoiceDueDays,
-      invoiceNumberPrefix: branding.invoiceNumberPrefix,
+      invoiceNumberPrefix: settings.invoiceNumberPrefix ?? branding.invoiceNumberPrefix,
     });
     const finalized = await finalizeInvoice(tx, invoice.id, settings.invoiceDueDays);
 
@@ -540,7 +540,7 @@ export async function changePlan(prisma: PrismaClient, params: ChangePlanParams)
       billingPeriodStart: now,
       billingPeriodEnd: subscription.currentPeriodEnd,
       invoiceDueDays: settings.invoiceDueDays,
-      invoiceNumberPrefix: branding.invoiceNumberPrefix,
+      invoiceNumberPrefix: settings.invoiceNumberPrefix ?? branding.invoiceNumberPrefix,
       metadata: { reason: "plan_change", fromPriceId: subscription.priceId, toPriceId: newPrice.id },
     });
     const finalized = await finalizeInvoice(tx, invoice.id, settings.invoiceDueDays);
@@ -631,7 +631,7 @@ export async function changeQuantity(
       billingPeriodStart: now,
       billingPeriodEnd: subscription.currentPeriodEnd,
       invoiceDueDays: settings.invoiceDueDays,
-      invoiceNumberPrefix: branding.invoiceNumberPrefix,
+      invoiceNumberPrefix: settings.invoiceNumberPrefix ?? branding.invoiceNumberPrefix,
       metadata: { reason: "seat_change" },
     });
     const finalized = await finalizeInvoice(tx, invoice.id, settings.invoiceDueDays);

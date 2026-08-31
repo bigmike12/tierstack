@@ -5,6 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import { setEntitlementInvalidator } from "@tierstack/billing";
 import { createPrismaClient, type PrismaClient } from "@tierstack/database";
 import { EntitlementCache } from "@tierstack/entitlements";
+import { createEmailTransport } from "@tierstack/notifications";
 import Fastify, { type FastifyInstance } from "fastify";
 import { loadConfig, type AppConfig } from "./env";
 import { createRedis, type RedisClient } from "./lib/redis";
@@ -39,6 +40,9 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
   const config = { ...loadConfig(), ...overrides } as AppConfig;
   const prisma = createPrismaClient(config.DATABASE_URL);
   const redis = createRedis(config.REDIS_URL);
+  // No key configured means the log transport: an invite prints instead of
+  // sending, same fallback the billing worker uses for every other email.
+  const emailTransport = createEmailTransport({ resendApiKey: config.RESEND_API_KEY });
 
   const app = Fastify({
     logger: {
@@ -108,7 +112,7 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
   registerAuth(app, prisma, config);
 
   registerAuthRoutes(app, prisma, config);
-  registerOrganizationRoutes(app, prisma);
+  registerOrganizationRoutes(app, prisma, emailTransport);
   registerApiKeyRoutes(app, prisma);
   registerBillingSettingsRoutes(app, prisma);
   registerPaymentProviderRoutes(app, prisma, config, redis);

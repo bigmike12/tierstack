@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
 
 export interface ActionState {
@@ -38,11 +39,48 @@ export async function updateBillingSettings(_prev: ActionState, formData: FormDa
         trialEndingNoticeDays: Number(formData.get("trialEndingNoticeDays")),
         supportEmail: String(formData.get("supportEmail") ?? "").trim() || null,
         senderName: String(formData.get("senderName") ?? "").trim() || null,
+        emailSender: String(formData.get("emailSender") ?? "").trim() || null,
+        invoiceNumberPrefix: String(formData.get("invoiceNumberPrefix") ?? "").trim() || null,
+        defaultCurrency: String(formData.get("defaultCurrency") ?? "").trim().toUpperCase() || undefined,
       }),
     });
     revalidatePath("/settings");
     revalidatePath("/dunning");
     return { message: "Billing policy saved." };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function updateProfile(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    await apiFetch("/v1/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ name: String(formData.get("name") ?? "").trim() }),
+    });
+    revalidatePath("/settings");
+    return { message: "Profile updated." };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function changePassword(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const newPassword = String(formData.get("newPassword") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+  if (newPassword !== confirmPassword) {
+    return { error: "New password and confirmation do not match." };
+  }
+
+  try {
+    await apiFetch("/v1/auth/password", {
+      method: "POST",
+      body: JSON.stringify({
+        currentPassword: String(formData.get("currentPassword") ?? ""),
+        newPassword,
+      }),
+    });
+    return { message: "Password changed." };
   } catch (error) {
     return failure(error);
   }
@@ -186,10 +224,23 @@ export async function resumeSubscription(formData: FormData): Promise<void> {
 }
 
 export async function retryInvoice(formData: FormData): Promise<void> {
-  await apiFetch(`/v1/invoices/${String(formData.get("invoiceId"))}/pay`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  }).catch(() => undefined);
+  const invoiceId = String(formData.get("invoiceId"));
+  const returnTo = String(formData.get("returnTo") ?? "/invoices");
+
+  try {
+    await apiFetch(`/v1/invoices/${invoiceId}/pay`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    revalidatePath("/invoices");
+    revalidatePath("/dunning");
+    // A thrown redirect propagates past this catch, so it always reaches the
+    // caller — the operator sees why the attempt failed instead of a click
+    // that silently did nothing.
+    redirect(`${returnTo}?problem=${encodeURIComponent(failure(error).error ?? "The payment attempt failed.")}`);
+  }
+
   revalidatePath("/invoices");
   revalidatePath("/dunning");
 }
@@ -200,4 +251,33 @@ export async function voidInvoice(formData: FormData): Promise<void> {
     body: JSON.stringify({}),
   }).catch(() => undefined);
   revalidatePath("/invoices");
+}
+
+export async function inviteMember(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const email = String(formData.get("email") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const role = String(formData.get("role") ?? "MEMBER");
+
+  try {
+    await apiFetch("/v1/organizations/current/members", {
+      method: "POST",
+      body: JSON.stringify({ email, name: name || undefined, role }),
+    });
+    revalidatePath("/settings");
+    return { message: `Invited ${email}.` };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function removeMember(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const memberId = String(formData.get("memberId") ?? "");
+
+  try {
+    await apiFetch(`/v1/organizations/current/members/${memberId}`, { method: "DELETE" });
+    revalidatePath("/settings");
+    return { message: "Removed." };
+  } catch (error) {
+    return failure(error);
+  }
 }

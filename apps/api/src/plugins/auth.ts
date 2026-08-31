@@ -13,6 +13,7 @@ const PUBLIC_PREFIXES = [
   "/health",
   "/v1/auth/register",
   "/v1/auth/login",
+  "/v1/invites/",
   "/webhooks/",
   "/mock/checkout",
 ];

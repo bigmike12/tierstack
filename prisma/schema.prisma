@@ -119,6 +119,11 @@ model OrganizationMember {
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
+  /// Hash of the single-use token sent in the invite email. Cleared once
+  /// accepted, so a claimed invite link cannot be replayed.
+  inviteTokenHash      String?   @unique
+  inviteTokenExpiresAt DateTime?
+
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -209,6 +214,11 @@ model BillingSettings {
   supportEmail           String?
   /// Sender name customers see. Falls back to the organization name.
   senderName             String?
+  /// From-address on customer email. Falls back to the platform default.
+  emailSender            String?
+  /// Prefix for this organization's invoice number sequence. Falls back to the
+  /// platform default.
+  invoiceNumberPrefix    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -960,6 +970,10 @@ model EmailMessage {
   providerMessageId String?
   failureReason     String?
   sentAt            DateTime?
+  /// Real delivery attempts made, not job ticks that found nothing to do.
+  /// Capped at MAX_EMAIL_ATTEMPTS — a permanently broken sender (an
+  /// unverified domain, say) must stop retrying, not run forever.
+  attempts          Int         @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -969,6 +983,7 @@ model EmailMessage {
   @@unique([organizationId, dedupeKey])
   @@index([organizationId, type, createdAt])
   @@index([status, createdAt])
+  @@index([customerId, createdAt])
   @@map("email_messages")
 }
 

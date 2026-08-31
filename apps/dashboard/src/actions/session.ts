@@ -73,6 +73,28 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   redirect("/overview");
 }
 
+export async function acceptInviteAction(
+  token: string,
+  _prev: FormState,
+  formData: FormData
+): Promise<FormState> {
+  const password = String(formData.get("password") ?? "");
+
+  const { envelope, setCookie, ok } = await apiPostRaw(
+    `/v1/invites/${encodeURIComponent(token)}/accept`,
+    password ? { password } : {}
+  );
+  if (!ok || envelope.error) {
+    return { error: envelope.error?.message ?? "Could not accept this invite." };
+  }
+
+  await persistSession(setCookie);
+  const data = envelope.data as { organization: { id: string } };
+  const store = await cookies();
+  store.set(ORG_COOKIE, data.organization.id, { sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 365 });
+  redirect("/overview");
+}
+
 export async function logoutAction(): Promise<void> {
   await apiFetch("/v1/auth/logout", { method: "POST" }).catch(() => undefined);
   const store = await cookies();

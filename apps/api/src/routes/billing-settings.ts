@@ -25,6 +25,8 @@ const updateSchema = z
     trialEndingNoticeDays: z.number().int().min(0).max(90).optional(),
     supportEmail: z.string().email().nullable().optional(),
     senderName: z.string().max(120).nullable().optional(),
+    emailSender: z.string().email().nullable().optional(),
+    invoiceNumberPrefix: z.string().min(1).max(20).nullable().optional(),
   })
   .strict();
 

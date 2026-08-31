@@ -11,6 +11,14 @@ import { EmailDeliveryError, type EmailTransport } from "./types";
  */
 const STALE_CLAIM_MS = 15 * 60 * 1000;
 
+/**
+ * A permanently broken sender — an unverified domain, a revoked API key —
+ * fails identically every time. Without a ceiling, the job that finds it
+ * every 5 minutes forever would retry it forever, indistinguishable in the
+ * logs from a rail that is actually recovering.
+ */
+export const MAX_EMAIL_ATTEMPTS = 5;
+
 export interface SendOnceParams {
   organizationId: string;
   /**
@@ -35,7 +43,11 @@ export interface SendOnceParams {
 
 export type SendOnceResult =
   | { sent: true; messageId: string; providerMessageId: string | null }
-  | { sent: false; reason: "ALREADY_SENT" | "IN_FLIGHT" | "SUPPRESSED" | "FAILED"; messageId: string | null };
+  | {
+      sent: false;
+      reason: "ALREADY_SENT" | "IN_FLIGHT" | "SUPPRESSED" | "FAILED" | "EXHAUSTED";
+      messageId: string | null;
+    };
 
 /**
  * Sends a message at most once per decision.
@@ -64,15 +76,18 @@ export async function sendOnce(
     ) {
       return { sent: false, reason: "IN_FLIGHT", messageId: existing.id };
     }
-    // PENDING and stale, or FAILED: worth another attempt.
+    if (existing.status === "FAILED" && existing.attempts >= MAX_EMAIL_ATTEMPTS) {
+      return { sent: false, reason: "EXHAUSTED", messageId: existing.id };
+    }
+    // PENDING and stale, or FAILED with attempts left: worth another attempt.
   }
 
   if (!params.enabled) {
-    const suppressed = await upsertClaim(prisma, params, "SUPPRESSED", now);
+    const suppressed = await upsertClaim(prisma, params, "SUPPRESSED", now, { countsAsAttempt: false });
     return { sent: false, reason: "SUPPRESSED", messageId: suppressed.id };
   }
 
-  const claim = await upsertClaim(prisma, params, "PENDING", now);
+  const claim = await upsertClaim(prisma, params, "PENDING", now, { countsAsAttempt: true });
 
   try {
     const result = await transport.send({
@@ -119,7 +134,8 @@ async function upsertClaim(
   prisma: PrismaClient,
   params: SendOnceParams,
   status: "PENDING" | "SUPPRESSED",
-  now: Date
+  now: Date,
+  options: { countsAsAttempt: boolean }
 ) {
   return prisma.emailMessage.upsert({
     where: {
@@ -136,7 +152,13 @@ async function upsertClaim(
       toEmail: params.toEmail,
       subject: params.email.subject,
       status,
+      attempts: options.countsAsAttempt ? 1 : 0,
     },
-    update: { status, subject: params.email.subject, updatedAt: now },
+    update: {
+      status,
+      subject: params.email.subject,
+      updatedAt: now,
+      ...(options.countsAsAttempt ? { attempts: { increment: 1 } } : {}),
+    },
   });
 }
