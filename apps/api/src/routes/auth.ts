@@ -5,7 +5,7 @@ import { z } from "zod";
 import { requireActor } from "../context";
 import type { AppConfig } from "../env";
 import { generateSessionToken, hashToken } from "../lib/api-keys";
-import { hashPassword, verifyPassword } from "../lib/password";
+import { hashPassword, PLACEHOLDER_PASSWORD_HASH, verifyPassword } from "../lib/password";
 import { recordAudit } from "../lib/audit";
 import { SESSION_COOKIE } from "../plugins/auth";
 
@@ -20,6 +20,32 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+const updateProfileSchema = z.object({
+  name: z.string().min(1).max(120),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(12, "Use at least 12 characters."),
+});
+
+const acceptInviteSchema = z.object({
+  password: z.string().min(12, "Use at least 12 characters.").optional(),
+});
+
+/** A pending invite: not removed, not yet accepted, token not expired. */
+function findPendingInvite(prisma: PrismaClient, token: string) {
+  return prisma.organizationMember.findFirst({
+    where: {
+      inviteTokenHash: hashToken(token),
+      removedAt: null,
+      acceptedAt: null,
+      inviteTokenExpiresAt: { gt: new Date() },
+    },
+    include: { organization: true, user: true },
+  });
+}
 
 function slugify(value: string): string {
   return value
@@ -181,20 +207,171 @@ export function registerAuthRoutes(app: FastifyInstance, prisma: PrismaClient, c
         request.requestId
       );
     }
-    const memberships = await prisma.organizationMember.findMany({
-      where: { userId: actor.userId, removedAt: null },
-      include: { organization: true },
-    });
+    const [memberships, user] = await Promise.all([
+      prisma.organizationMember.findMany({
+        where: { userId: actor.userId, removedAt: null },
+        include: { organization: true },
+      }),
+      prisma.user.findUniqueOrThrow({ where: { id: actor.userId }, select: { id: true, email: true, name: true } }),
+    ]);
     return success(
       {
         actor: "user",
-        user: { id: actor.userId, email: actor.email },
+        user,
         organizations: memberships.map((m) => ({
           id: m.organizationId,
           name: m.organization.name,
           slug: m.organization.slug,
           role: m.role,
         })),
+      },
+      request.requestId
+    );
+  });
+
+  /** Updates the caller's own display name. Email is the login identity and is not changed here. */
+  app.patch("/v1/auth/me", async (request) => {
+    const actor = requireActor(request);
+    if (actor.kind !== "USER") {
+      throw new BillingError("FORBIDDEN", "Only a signed-in user can update a profile.");
+    }
+    const body = updateProfileSchema.parse(request.body);
+
+    const user = await prisma.user.update({
+      where: { id: actor.userId },
+      data: { name: body.name },
+      select: { id: true, email: true, name: true },
+    });
+
+    return success({ user }, request.requestId);
+  });
+
+  /**
+   * Requires the current password so a hijacked, still-logged-in session
+   * cannot be used to lock the real owner out by silently changing it.
+   */
+  app.post("/v1/auth/password", async (request) => {
+    const actor = requireActor(request);
+    if (actor.kind !== "USER") {
+      throw new BillingError("FORBIDDEN", "Only a signed-in user can change a password.");
+    }
+    const body = changePasswordSchema.parse(request.body);
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: actor.userId } });
+    if (!(await verifyPassword(body.currentPassword, user.passwordHash))) {
+      throw new BillingError("INVALID_CREDENTIALS", "Current password is incorrect.");
+    }
+
+    const passwordHash = await hashPassword(body.newPassword);
+    await prisma.user.update({ where: { id: actor.userId }, data: { passwordHash } });
+
+    // Every other session for this user is revoked, so a stolen session
+    // cannot outlive the password that was just changed to get rid of it.
+    await prisma.session.updateMany({
+      where: { userId: actor.userId, revokedAt: null, id: { not: actor.sessionId } },
+      data: { revokedAt: new Date() },
+    });
+
+    // A password change is account-wide, not scoped to one organization, but
+    // every audit log row requires one — recorded against each org the user
+    // belongs to, so any of their teams can see it happened.
+    const memberships = await prisma.organizationMember.findMany({
+      where: { userId: actor.userId, removedAt: null },
+      select: { organizationId: true },
+    });
+    await Promise.all(
+      memberships.map((m) =>
+        recordAudit(prisma, {
+          organizationId: m.organizationId,
+          actorType: "USER",
+          userId: actor.userId,
+          action: "user.password_changed",
+          resource: "user",
+          resourceId: actor.userId,
+          ipAddress: request.ip,
+        })
+      )
+    );
+
+    return success({ ok: true }, request.requestId);
+  });
+
+  /**
+   * Public: no session or organization required, only a valid, unexpired
+   * token. Tells the accept page whether to ask for a password — an invitee
+   * who already has an account keeps their existing one.
+   */
+  app.get("/v1/invites/:token", async (request) => {
+    const { token } = request.params as { token: string };
+    const member = await findPendingInvite(prisma, token);
+    if (!member) throw new BillingError("INVITE_NOT_FOUND", "This invite link is invalid or has expired.");
+
+    return success(
+      {
+        organizationName: member.organization.name,
+        email: member.user.email,
+        role: member.role,
+        requiresPassword: member.user.passwordHash === PLACEHOLDER_PASSWORD_HASH,
+      },
+      request.requestId
+    );
+  });
+
+  /**
+   * Consumes the invite token exactly once — the lookup itself excludes any
+   * membership that already has `acceptedAt` set, so a replayed link finds
+   * nothing the second time regardless of whether the hash was also cleared.
+   */
+  app.post("/v1/invites/:token/accept", async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const body = acceptInviteSchema.parse(request.body);
+
+    const member = await findPendingInvite(prisma, token);
+    if (!member) throw new BillingError("INVITE_NOT_FOUND", "This invite link is invalid or has expired.");
+
+    const needsPassword = member.user.passwordHash === PLACEHOLDER_PASSWORD_HASH;
+    if (needsPassword && !body.password) {
+      throw new BillingError("VALIDATION_ERROR", "A password is required to accept this invite.");
+    }
+    const passwordHash = needsPassword && body.password ? await hashPassword(body.password) : null;
+
+    await prisma.$transaction(async (tx) => {
+      if (passwordHash) {
+        await tx.user.update({ where: { id: member.user.id }, data: { passwordHash } });
+      }
+      await tx.organizationMember.update({
+        where: { id: member.id },
+        data: { acceptedAt: new Date(), inviteTokenHash: null, inviteTokenExpiresAt: null },
+      });
+    });
+
+    const { token: sessionToken, tokenHash } = generateSessionToken();
+    await prisma.session.create({
+      data: {
+        id: newId("session"),
+        userId: member.user.id,
+        tokenHash,
+        userAgent: request.headers["user-agent"]?.slice(0, 255) ?? null,
+        ipAddress: request.ip,
+        expiresAt: new Date(Date.now() + config.SESSION_TTL_HOURS * 3_600_000),
+      },
+    });
+
+    await recordAudit(prisma, {
+      organizationId: member.organizationId,
+      actorType: "USER",
+      userId: member.user.id,
+      action: "member.invite_accepted",
+      resource: "organization_member",
+      resourceId: member.id,
+      ipAddress: request.ip,
+    });
+
+    reply.setCookie(SESSION_COOKIE, sessionToken, cookieOptions);
+    return success(
+      {
+        user: { id: member.user.id, email: member.user.email, name: member.user.name },
+        organization: { id: member.organization.id, name: member.organization.name, slug: member.organization.slug },
       },
       request.requestId
     );

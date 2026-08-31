@@ -20,6 +20,8 @@ const schema = z.object({
   BILLING_ENV: z.enum(["test", "live"]).default("test"),
   APP_NAME: z.string().default("Tierstack"),
   INVOICE_NUMBER_PREFIX: z.string().default("INV"),
+  /** Unset means the log transport: invite emails print instead of sending. */
+  RESEND_API_KEY: z.string().optional(),
 
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 14),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),

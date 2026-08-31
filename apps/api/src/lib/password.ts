@@ -9,6 +9,13 @@ const scrypt = promisify(scryptCallback) as (
 
 const KEY_LENGTH = 64;
 
+/**
+ * Set on a user created by an invite before they exist for real. Not a valid
+ * scrypt hash — `verifyPassword` rejects it unconditionally, so an invitee
+ * cannot log in until they accept the invite and set a real password.
+ */
+export const PLACEHOLDER_PASSWORD_HASH = "invited$$";
+
 /** scrypt with a per-password salt. Passwords are never stored or logged. */
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);

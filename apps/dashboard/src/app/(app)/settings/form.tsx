@@ -79,6 +79,20 @@ export function BillingPolicyForm({ settings }: { settings: BillingSettings }) {
           <Input name="invoiceDueDays" type="number" min={0} max={365} defaultValue={settings.invoiceDueDays} required />
         </Field>
 
+        <Field label="Invoice number prefix" hint="e.g. ACME produces ACME-2026-00001. Blank uses the platform default.">
+          <Input name="invoiceNumberPrefix" defaultValue={settings.invoiceNumberPrefix ?? ""} placeholder="INV" maxLength={20} />
+        </Field>
+
+        <Field label="Default currency" hint="Used for new invoices and subscriptions unless a price sets its own.">
+          <Select name="defaultCurrency" defaultValue={settings.defaultCurrency}>
+            <option value="NGN">NGN — Nigerian Naira</option>
+            <option value="USD">USD — United States Dollar</option>
+            <option value="KES">KES — Kenyan Shilling</option>
+            <option value="GHS">GHS — Ghanaian Cedi</option>
+            <option value="ZAR">ZAR — South African Rand</option>
+          </Select>
+        </Field>
+
         <Field
           label="Abandoned checkout expiry (hours)"
           hint="An unpaid first invoice is voided and its subscription expired after this long. Zero disables it."
@@ -145,6 +159,14 @@ export function BillingPolicyForm({ settings }: { settings: BillingSettings }) {
         <div className="grid gap-5 sm:grid-cols-2">
           <Field label="Sender name" hint="Who the email appears to be from. Defaults to your organization name.">
             <Input name="senderName" defaultValue={settings.senderName ?? ""} placeholder="Kola Labs" />
+          </Field>
+          <Field label="Sender address" hint="The from-address itself. Blank uses the platform default.">
+            <Input
+              name="emailSender"
+              type="email"
+              defaultValue={settings.emailSender ?? ""}
+              placeholder="billing@yourcompany.com"
+            />
           </Field>
           <Field label="Support address" hint="Where replies go. Blank means replies come back to the sender.">
             <Input

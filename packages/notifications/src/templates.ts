@@ -287,3 +287,39 @@ export function trialEnding(input: TrialEndingInput): RenderedEmail {
     ]),
   };
 }
+
+export interface MemberInvitedInput extends TemplateContext {
+  role: string;
+  acceptUrl: string;
+  /** Whether the invitee already has an account and only needs to accept. */
+  hasExistingAccount: boolean;
+}
+
+export function memberInvited(input: MemberInvitedInput): RenderedEmail {
+  const role = input.role.charAt(0) + input.role.slice(1).toLowerCase();
+  const action = input.hasExistingAccount
+    ? "Accept to add it to your existing account."
+    : "Accept to set a password and get started.";
+
+  return {
+    subject: `You've been invited to join ${input.merchantName}`,
+    text: [
+      greeting(input.customerName),
+      "",
+      `You've been invited to join ${input.merchantName} on Tierstack as a ${role}.`,
+      "",
+      action,
+      "",
+      input.acceptUrl,
+      "",
+      "This link expires in 7 days.",
+      signoff(input),
+    ].join("\n"),
+    html: wrap(
+      input,
+      `Join ${input.merchantName}`,
+      [`You've been invited to join <strong>${input.merchantName}</strong> on Tierstack as a ${role}.`, action],
+      { label: "Accept invite", url: input.acceptUrl }
+    ),
+  };
+}

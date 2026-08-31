@@ -7,7 +7,7 @@ export interface Organization {
 
 export interface Session {
   actor: "user" | "api_key";
-  user?: { id: string; email: string };
+  user?: { id: string; email: string; name: string };
   organizations: Organization[];
 }
 
@@ -27,6 +27,8 @@ export interface BillingSettings {
   trialEndingNoticeDays: number;
   supportEmail: string | null;
   senderName: string | null;
+  emailSender: string | null;
+  invoiceNumberPrefix: string | null;
 }
 
 export interface OverviewMetrics {
@@ -131,6 +133,7 @@ export interface EmailMessage {
   status: "PENDING" | "SENT" | "FAILED" | "SUPPRESSED";
   provider: string | null;
   failureReason: string | null;
+  attempts: number;
   sentAt: string | null;
   createdAt: string;
 }

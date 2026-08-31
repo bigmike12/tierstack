@@ -15,7 +15,15 @@ import type { BillingSettings, EmailMessage, Invoice, Subscription } from "@/lib
 
 export const metadata: Metadata = { title: "Dunning" };
 
-export default async function DunningPage() {
+/** Mirrors MAX_EMAIL_ATTEMPTS in packages/notifications/src/service.ts. */
+const MAX_EMAIL_ATTEMPTS = 5;
+
+export default async function DunningPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ problem?: string }>;
+}) {
+  const { problem } = await searchParams;
   const [settings, inGrace, unpaidSubs, openInvoices, emails] = await Promise.all([
     apiFetchOrNull<BillingSettings>("/v1/billing-settings"),
     apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?status=GRACE_PERIOD&limit=50"),
@@ -38,6 +46,12 @@ export default async function DunningPage() {
         title="Dunning"
         description="Who is behind, where each one is in the retry schedule, and what they have been told."
       />
+
+      {problem ? (
+        <p role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {problem}
+        </p>
+      ) : null}
 
       <section aria-label="Recovery summary" className="grid gap-4 sm:grid-cols-3">
         <Stat
@@ -209,6 +223,7 @@ export default async function DunningPage() {
                     <TD className="text-right">
                       <form action={retryInvoice}>
                         <input type="hidden" name="invoiceId" value={invoice.id} />
+                        <input type="hidden" name="returnTo" value="/dunning" />
                         <Button type="submit" variant="outline" size="sm">
                           Retry
                         </Button>
@@ -271,7 +286,7 @@ export default async function DunningPage() {
                         <Badge>Email off</Badge>
                       ) : message.status === "FAILED" ? (
                         <Badge tone="danger" title={message.failureReason ?? undefined}>
-                          Refused
+                          {message.attempts >= MAX_EMAIL_ATTEMPTS ? "Gave up" : "Refused, retrying"}
                         </Badge>
                       ) : (
                         <Badge tone="warning">Pending</Badge>

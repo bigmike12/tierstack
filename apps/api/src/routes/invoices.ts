@@ -3,7 +3,7 @@ import { attemptInvoicePayment, syncPaymentAttempt, voidInvoice } from "@tiersta
 import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { environmentOf, requireOrganization, requireSecretKeyOrUser } from "../context";
+import { environmentOf, requireOrganization, requireRole, requireSecretKeyOrUser } from "../context";
 import type { AppConfig } from "../env";
 import { recordAudit } from "../lib/audit";
 import type { RedisClient } from "../lib/redis";
@@ -88,7 +88,10 @@ export function registerInvoiceRoutes(
    */
   app.post("/v1/invoices/:invoiceId/pay", async (request, reply) => {
     const organizationId = requireOrganization(request);
-    requireSecretKeyOrUser(request);
+    // A secret key carries the org's full authority already (see requireRole),
+    // so this only ever restricts human dashboard users, never SDK/API callers.
+    const actor = requireSecretKeyOrUser(request);
+    requireRole(request, "ADMIN");
     const { invoiceId } = request.params as { invoiceId: string };
     const body = z
       .object({
@@ -114,6 +117,17 @@ export function registerInvoiceRoutes(
         paymentMethodId: body.paymentMethodId ?? null,
         callbackUrl: body.callbackUrl ?? null,
         metadata: body.metadata,
+      });
+
+      await recordAudit(prisma, {
+        organizationId,
+        actorType: actor.kind,
+        userId: actor.kind === "USER" ? actor.userId : null,
+        action: "invoice.payment_attempted",
+        resource: "invoice",
+        resourceId: invoiceId,
+        metadata: { status: result.status, provider: result.provider, amount: result.amount },
+        ipAddress: request.ip,
       });
 
       const payload = success(result, request.requestId);
@@ -158,13 +172,18 @@ export function registerInvoiceRoutes(
    */
   app.get("/v1/emails", async (request) => {
     const organizationId = requireOrganization(request);
-    const query = request.query as Record<string, unknown> & { type?: string; status?: string };
+    const query = request.query as Record<string, unknown> & {
+      type?: string;
+      status?: string;
+      customerId?: string;
+    };
     const page = parsePageQuery(query, { defaultLimit: 25 });
 
     const where = {
       organizationId,
       ...(query.type ? { type: query.type } : {}),
       ...(query.status ? { status: query.status as never } : {}),
+      ...(query.customerId ? { customerId: query.customerId } : {}),
       ...(page.q ? { toEmail: { contains: page.q, mode: "insensitive" as const } } : {}),
     };
 

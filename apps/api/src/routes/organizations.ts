@@ -1,9 +1,13 @@
+import { loadBillingSettings } from "@tierstack/billing";
 import type { PrismaClient } from "@tierstack/database";
-import { BillingError, newId, success } from "@tierstack/shared";
+import { memberInvited, sendOnce, type EmailTransport } from "@tierstack/notifications";
+import { BillingError, loadBranding, newId, success } from "@tierstack/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireActor, requireOrganization, requireRole, type MemberRole } from "../context";
 import { recordAudit } from "../lib/audit";
+import { generateSessionToken } from "../lib/api-keys";
+import { PLACEHOLDER_PASSWORD_HASH } from "../lib/password";
 
 const createOrgSchema = z.object({ name: z.string().min(1).max(120) });
 const inviteSchema = z.object({
@@ -17,7 +21,13 @@ function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 }
 
-export function registerOrganizationRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function registerOrganizationRoutes(
+  app: FastifyInstance,
+  prisma: PrismaClient,
+  emailTransport: EmailTransport
+): void {
   app.post("/v1/organizations", async (request, reply) => {
     const actor = requireActor(request);
     if (actor.kind !== "USER") {
@@ -108,8 +118,9 @@ export function registerOrganizationRoutes(app: FastifyInstance, prisma: PrismaC
 
   /**
    * Invites an existing or new user into the organization. A brand-new invitee
-   * gets a placeholder credential they cannot sign in with until a password is
-   * set, so an invite never creates a usable account on its own.
+   * gets a placeholder credential they cannot sign in with until they accept
+   * the invite and set a real password — an invite never creates a usable
+   * account on its own. The accept link is single-use and expires in 7 days.
    */
   app.post("/v1/organizations/current/members", async (request, reply) => {
     const organizationId = requireOrganization(request);
@@ -117,15 +128,19 @@ export function registerOrganizationRoutes(app: FastifyInstance, prisma: PrismaC
     const body = inviteSchema.parse(request.body);
     const actor = requireActor(request);
 
-    const member = await prisma.$transaction(async (tx) => {
+    const { token, tokenHash } = generateSessionToken();
+    const inviteTokenExpiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_MS);
+
+    const { member, organization, isNewUser } = await prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { email: body.email } });
+      const isNewUser = !user;
       if (!user) {
         user = await tx.user.create({
           data: {
             id: newId("user"),
             email: body.email,
             name: body.name ?? body.email.split("@")[0]!,
-            passwordHash: "invited$$",
+            passwordHash: PLACEHOLDER_PASSWORD_HASH,
           },
         });
       }
@@ -136,20 +151,22 @@ export function registerOrganizationRoutes(app: FastifyInstance, prisma: PrismaC
       if (existing && !existing.removedAt) {
         throw new BillingError("ALREADY_EXISTS", "That person is already a member of this organization.");
       }
-      if (existing) {
-        return tx.organizationMember.update({
-          where: { id: existing.id },
-          data: { removedAt: null, role: body.role, invitedAt: new Date(), acceptedAt: null },
-        });
-      }
-      return tx.organizationMember.create({
-        data: {
-          id: newId("member"),
-          organizationId,
-          userId: user.id,
-          role: body.role,
-        },
-      });
+      const memberData = {
+        removedAt: null,
+        role: body.role,
+        invitedAt: new Date(),
+        acceptedAt: null,
+        inviteTokenHash: tokenHash,
+        inviteTokenExpiresAt,
+      };
+      const member = existing
+        ? await tx.organizationMember.update({ where: { id: existing.id }, data: memberData })
+        : await tx.organizationMember.create({
+            data: { id: newId("member"), organizationId, userId: user.id, ...memberData },
+          });
+
+      const organization = await tx.organization.findUniqueOrThrow({ where: { id: organizationId } });
+      return { member, organization, isNewUser };
     });
 
     await recordAudit(prisma, {
@@ -161,6 +178,38 @@ export function registerOrganizationRoutes(app: FastifyInstance, prisma: PrismaC
       resourceId: member.id,
       metadata: { email: body.email, role: body.role },
       ipAddress: request.ip,
+    });
+
+    const settings = await loadBillingSettings(prisma, organizationId);
+    const branding = loadBranding();
+    const acceptUrl = `${branding.appUrl.replace(/\/$/, "")}/invite/${token}`;
+
+    await sendOnce(
+      prisma,
+      emailTransport,
+      {
+        organizationId,
+        dedupeKey: `invite:${member.id}:${tokenHash.slice(0, 16)}`,
+        type: "member_invited",
+        toEmail: body.email,
+        from: settings.emailSender ?? branding.emailSender,
+        fromName: settings.senderName ?? organization.name,
+        replyTo: settings.supportEmail ?? null,
+        email: memberInvited({
+          merchantName: organization.name,
+          customerName: body.name ?? null,
+          supportEmail: settings.supportEmail ?? null,
+          role: body.role,
+          acceptUrl,
+          hasExistingAccount: !isNewUser,
+        }),
+        enabled: true,
+      }
+    ).catch((error: unknown) => {
+      // The membership and token are already committed — worth surfacing that
+      // the invite exists even if the email did not go out, not losing the
+      // whole operation over a provider hiccup.
+      request.log.error({ err: error }, "invite email failed to send");
     });
 
     return reply.status(201).send(success(member, request.requestId));

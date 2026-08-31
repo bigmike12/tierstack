@@ -16,6 +16,7 @@
     "@tierstack/billing": "0.1.0",
     "@tierstack/database": "0.1.0",
     "@tierstack/entitlements": "0.1.0",
+    "@tierstack/notifications": "0.1.0",
     "@tierstack/payments-core": "0.1.0",
     "@tierstack/payments-mock": "0.1.0",
     "@tierstack/shared": "0.1.0",

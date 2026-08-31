@@ -13,8 +13,15 @@ import type { Invoice } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Invoice" };
 
-export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function InvoicePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ problem?: string }>;
+}) {
   const { id } = await params;
+  const { problem } = await searchParams;
   const invoice = await apiFetchOrNull<Invoice>(`/v1/invoices/${id}`);
   if (!invoice) notFound();
 
@@ -39,6 +46,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             <div className="flex gap-2">
               <form action={retryInvoice}>
                 <input type="hidden" name="invoiceId" value={invoice.id} />
+                <input type="hidden" name="returnTo" value={`/invoices/${invoice.id}`} />
                 <Button type="submit" size="sm">
                   Attempt payment
                 </Button>
@@ -53,6 +61,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           ) : null
         }
       />
+
+      {problem ? (
+        <p role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {problem}
+        </p>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
