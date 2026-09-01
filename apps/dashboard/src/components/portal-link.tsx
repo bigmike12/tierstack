@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { createPortalLink, type PortalLinkState } from "@/actions/portal";
 import { Button } from "@/components/ui/button";
+import { ActionToast } from "@/components/ui/toast";
 
 function Submit() {
   const { pending } = useFormStatus();
@@ -28,8 +29,7 @@ export function PortalLinkButton({ customerId }: { customerId: string }) {
     <form action={action} className="space-y-3">
       <input type="hidden" name="customerId" value={customerId} />
       <Submit />
-
-      {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
+      <ActionToast state={state} />
 
       {state.url ? (
         <div className="space-y-2">

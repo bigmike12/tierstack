@@ -274,29 +274,52 @@ export async function updatePrice(_prev: CatalogueState, formData: FormData): Pr
  * they signed up on, and removing it would orphan their subscription and every
  * invoice already issued against it.
  */
-export async function archivePrice(formData: FormData): Promise<void> {
+export async function archivePrice(_prev: CatalogueState, formData: FormData): Promise<CatalogueState> {
   const priceId = String(formData.get("priceId"));
   const planId = String(formData.get("planId"));
   const active = formData.get("active") === "true";
 
-  await apiFetch(`/v1/prices/${priceId}`, {
-    method: "PATCH",
-    body: JSON.stringify({ active }),
-  }).catch(() => undefined);
+  try {
+    await apiFetch(`/v1/prices/${priceId}`, { method: "PATCH", body: JSON.stringify({ active }) });
+  } catch (error) {
+    return failure(error);
+  }
 
   revalidatePath("/plans");
   revalidatePath(`/plans/${planId}`);
+  return { message: active ? "Price restored." : "Price archived." };
 }
 
-export async function setPlanActive(formData: FormData): Promise<void> {
+export async function setPlanActive(_prev: CatalogueState, formData: FormData): Promise<CatalogueState> {
   const planId = String(formData.get("planId"));
   const active = formData.get("active") === "true";
 
-  await apiFetch(`/v1/plans/${planId}`, {
-    method: "PATCH",
-    body: JSON.stringify({ active }),
-  }).catch(() => undefined);
+  try {
+    await apiFetch(`/v1/plans/${planId}`, { method: "PATCH", body: JSON.stringify({ active }) });
+  } catch (error) {
+    return failure(error);
+  }
 
   revalidatePath("/plans");
   revalidatePath(`/plans/${planId}`);
+  return { message: active ? "Plan restored." : "Plan archived." };
+}
+
+/**
+ * Deleting a plan can genuinely fail — "3 subscriptions are still active" is
+ * something the operator needs to actually see, not a click that silently did
+ * nothing, so this reports through CatalogueState rather than swallowing the
+ * error the way the archive/restore toggle above does.
+ */
+export async function deletePlan(_prev: CatalogueState, formData: FormData): Promise<CatalogueState> {
+  const planId = String(formData.get("planId"));
+
+  try {
+    await apiFetch(`/v1/plans/${planId}`, { method: "DELETE" });
+  } catch (error) {
+    return failure(error);
+  }
+
+  revalidatePath("/plans");
+  redirect("/plans?deleted=1");
 }

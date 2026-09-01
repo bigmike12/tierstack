@@ -255,6 +255,32 @@ export async function listCustomerUsage(
   return snapshots;
 }
 
+/**
+ * Two meters that mean the same thing to whoever is reading the dashboard —
+ * same name, differently cased — are as confusing as two meters with the same
+ * code, so both are checked, not just the one the database itself enforces.
+ */
+async function assertMeterNameAvailable(
+  prisma: PrismaClient,
+  params: { organizationId: string; name: string; excludeMeterId?: string }
+): Promise<void> {
+  const clash = await prisma.usageMeter.findFirst({
+    where: {
+      organizationId: params.organizationId,
+      deletedAt: null,
+      name: { equals: params.name, mode: "insensitive" },
+      ...(params.excludeMeterId ? { id: { not: params.excludeMeterId } } : {}),
+    },
+    select: { id: true },
+  });
+  if (clash) {
+    throw new BillingError(
+      "ALREADY_EXISTS",
+      `A meter named "${params.name}" already exists. Names must be unique so the dashboard never shows two meters that look identical.`
+    );
+  }
+}
+
 export async function createMeter(
   prisma: PrismaClient,
   params: {
@@ -267,9 +293,21 @@ export async function createMeter(
   }
 ) {
   const aggregation = assertAggregation(params.aggregation ?? "SUM");
-  return prisma.usageMeter.upsert({
-    where: { organizationId_code: { organizationId: params.organizationId, code: params.code } },
-    create: {
+
+  const existingCode = await prisma.usageMeter.findFirst({
+    where: { organizationId: params.organizationId, code: params.code, deletedAt: null },
+    select: { id: true },
+  });
+  if (existingCode) {
+    throw new BillingError(
+      "ALREADY_EXISTS",
+      `A meter with code "${params.code}" already exists. Edit it instead of creating a second one.`
+    );
+  }
+  await assertMeterNameAvailable(prisma, { organizationId: params.organizationId, name: params.name });
+
+  return prisma.usageMeter.create({
+    data: {
       id: newId("usageMeter"),
       organizationId: params.organizationId,
       code: params.code,
@@ -278,6 +316,40 @@ export async function createMeter(
       aggregation,
       metadata: (params.metadata ?? {}) as never,
     },
-    update: { name: params.name, unitLabel: params.unitLabel ?? null, aggregation },
+  });
+}
+
+export async function updateMeter(
+  prisma: PrismaClient,
+  params: {
+    organizationId: string;
+    meterId: string;
+    name?: string;
+    unitLabel?: string | null;
+    aggregation?: string;
+    active?: boolean;
+  }
+) {
+  const meter = await prisma.usageMeter.findFirst({
+    where: { id: params.meterId, organizationId: params.organizationId, deletedAt: null },
+  });
+  if (!meter) throw BillingError.notFound("USAGE_METER_NOT_FOUND", "Usage meter");
+
+  if (params.name && params.name !== meter.name) {
+    await assertMeterNameAvailable(prisma, {
+      organizationId: params.organizationId,
+      name: params.name,
+      excludeMeterId: meter.id,
+    });
+  }
+
+  return prisma.usageMeter.update({
+    where: { id: meter.id },
+    data: {
+      name: params.name ?? undefined,
+      unitLabel: params.unitLabel === undefined ? undefined : params.unitLabel,
+      aggregation: params.aggregation ? assertAggregation(params.aggregation) : undefined,
+      active: params.active ?? undefined,
+    },
   });
 }

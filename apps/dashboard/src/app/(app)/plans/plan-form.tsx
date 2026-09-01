@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import { createPlan, updatePlan, type CatalogueState } from "@/actions/catalogue";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { ActionToast } from "@/components/ui/toast";
 
 function Submit({ label, pendingLabel }: { label: string; pendingLabel: string }) {
   const { pending } = useFormStatus();
@@ -13,27 +14,6 @@ function Submit({ label, pendingLabel }: { label: string; pendingLabel: string }
       {pending ? pendingLabel : label}
     </Button>
   );
-}
-
-export function Alert({ state }: { state: CatalogueState }) {
-  if (state.error) {
-    return (
-      <p
-        role="alert"
-        className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-      >
-        {state.error}
-      </p>
-    );
-  }
-  if (state.message) {
-    return (
-      <p role="status" className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm">
-        {state.message}
-      </p>
-    );
-  }
-  return null;
 }
 
 const FEATURE_HINT = (
@@ -51,7 +31,7 @@ export function CreatePlanForm() {
 
   return (
     <form action={action} className="space-y-5">
-      <Alert state={state} />
+      <ActionToast state={state} />
 
       <div className="grid gap-5 sm:grid-cols-2">
         <Field label="Name" hint="What a customer would see.">
@@ -108,7 +88,7 @@ export function EditPlanForm({
   return (
     <form action={action} className="space-y-5">
       <input type="hidden" name="planId" value={planId} />
-      <Alert state={state} />
+      <ActionToast state={state} />
 
       <Field label="Name">
         <Input name="name" required defaultValue={state.values?.name ?? name} />

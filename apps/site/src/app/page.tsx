@@ -79,7 +79,7 @@ export default function Home() {
               {BRAND.name} is that layer, so it is not a folder in your codebase.
             </p>
             <p className="mt-7 text-[15px]">
-              <Link href="/how-it-works" className="border-b border-line text-ink hover:border-ink">
+              <Link href="/how-it-works" className="border-b border-line text-ink hover:border-accent">
                 The whole thing explained without jargon
               </Link>
             </p>
@@ -119,7 +119,7 @@ export default function Home() {
                 <h3 className="text-xl font-semibold tracking-tight">{item.title}</h3>
                 <p className="mt-3 flex-1 leading-relaxed text-muted">{item.body}</p>
                 <p className="mt-5 text-[15px]">
-                  <Link href={item.href} className="border-b border-line text-ink hover:border-ink">
+                  <Link href={item.href} className="border-b border-line text-ink hover:border-accent">
                     {item.cta}
                   </Link>
                 </p>
@@ -328,7 +328,7 @@ export default function Home() {
             <p className="mt-10 max-w-readable border-t border-line pt-6 text-[15px] leading-relaxed text-muted">
               Paystack is verified end to end. Monnify and Flutterwave are not written yet, and the
               client libraries do not exist.{" "}
-              <Link href="/status" className="border-b border-line text-ink hover:border-ink">
+              <Link href="/status" className="border-b border-line text-ink hover:border-accent">
                 The full list of what is and is not built
               </Link>
               .

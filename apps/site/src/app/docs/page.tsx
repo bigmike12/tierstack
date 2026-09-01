@@ -17,13 +17,13 @@ export default function DocsIndex() {
       <div className="mt-9 flex flex-wrap items-center gap-3">
         <Link
           href="/docs/quickstart"
-          className="rounded-md bg-ink px-6 py-3 text-sm font-medium text-paper transition-opacity hover:opacity-88"
+          className="rounded-md bg-accent px-6 py-3 text-sm font-medium text-paper transition-colors hover:bg-accent-hover"
         >
           Start with the quickstart
         </Link>
         <Link
           href="/docs/responses-and-errors"
-          className="rounded-md border border-line px-6 py-3 text-sm font-medium transition-colors hover:border-ink"
+          className="rounded-md border border-line px-6 py-3 text-sm font-medium transition-colors hover:border-accent hover:text-accent"
         >
           Responses and errors
         </Link>
@@ -56,7 +56,7 @@ export default function DocsIndex() {
         These pages describe what is built. Where something is not built — outbound webhooks, client
         libraries, the Monnify and Flutterwave adapters — the page says so rather than leaving you to
         find out.{" "}
-        <Link href="/status" className="border-b border-line text-ink hover:border-ink">
+        <Link href="/status" className="border-b border-line text-ink hover:border-accent">
           The full status list
         </Link>
         .

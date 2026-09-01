@@ -2,11 +2,12 @@ import { lookupCustomer } from "@tierstack/billing";
 import type { PrismaClient } from "@tierstack/database";
 import { EntitlementCache } from "@tierstack/entitlements";
 import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierstack/shared";
-import { createMeter, listCustomerUsage, trackUsage } from "@tierstack/usage";
+import { createMeter, listCustomerUsage, trackUsage, updateMeter } from "@tierstack/usage";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireOrganization, requireSecretKeyOrUser } from "../context";
+import { requireActor, requireOrganization, requireRole, requireSecretKeyOrUser } from "../context";
 import type { AppConfig } from "../env";
+import { recordAudit } from "../lib/audit";
 import type { RedisClient } from "../lib/redis";
 
 const trackSchema = z.object({
@@ -29,6 +30,16 @@ const meterSchema = z.object({
   metadata: z.record(z.unknown()).default({}),
 });
 
+// Code is deliberately not editable, the same call this codebase already
+// makes for a Price's code: it is a public identifier a developer's own
+// integration references by value.
+const meterUpdateSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  unitLabel: z.string().max(40).nullable().optional(),
+  aggregation: z.enum(["SUM", "MAX", "LAST", "UNIQUE_COUNT"]).optional(),
+  active: z.boolean().optional(),
+});
+
 export function registerUsageRoutes(
   app: FastifyInstance,
   prisma: PrismaClient,
@@ -39,9 +50,14 @@ export function registerUsageRoutes(
 
   // -- Meters ----------------------------------------------------------------
 
+  /**
+   * Meters govern what a plan can bill against, the same class of change as
+   * creating a plan or a price — both of those already require ADMIN, so this
+   * did too little by only requiring any signed-in actor.
+   */
   app.post("/v1/usage-meters", async (request, reply) => {
     const organizationId = requireOrganization(request);
-    requireSecretKeyOrUser(request);
+    requireRole(request, "ADMIN");
     const body = meterSchema.parse(request.body);
 
     const meter = await createMeter(prisma, { organizationId, ...body });
@@ -53,10 +69,85 @@ export function registerUsageRoutes(
   app.get("/v1/usage-meters", async (request) => {
     const organizationId = requireOrganization(request);
     const meters = await prisma.usageMeter.findMany({
-      where: { organizationId },
+      where: { organizationId, deletedAt: null },
       orderBy: { code: "asc" },
     });
     return success(meters, request.requestId);
+  });
+
+  /** Renames, relabels, re-aggregates, or archives/restores (via `active`) a meter. */
+  app.patch("/v1/usage-meters/:meterId", async (request) => {
+    const organizationId = requireOrganization(request);
+    requireRole(request, "ADMIN");
+    const actor = requireActor(request);
+    const { meterId } = request.params as { meterId: string };
+    const body = meterUpdateSchema.parse(request.body);
+
+    const updated = await updateMeter(prisma, { organizationId, meterId, ...body });
+    // A renamed/reaggregated/archived meter can change what a plan entitles.
+    await cache.invalidateOrganization(organizationId);
+
+    await recordAudit(prisma, {
+      organizationId,
+      actorType: actor.kind,
+      userId: actor.kind === "USER" ? actor.userId : null,
+      action: "usage_meter.updated",
+      resource: "usage_meter",
+      resourceId: updated.id,
+      metadata: body,
+      ipAddress: request.ip,
+    });
+
+    return success(updated, request.requestId);
+  });
+
+  /**
+   * Never a hard delete — every historical usage event references this row,
+   * and the database cascades a real delete straight through that
+   * consumption history. Blocked while any active price still bills against
+   * it, the same shape as deleting a plan: archive first, wait for nothing to
+   * depend on it, then this succeeds.
+   */
+  app.delete("/v1/usage-meters/:meterId", async (request) => {
+    const organizationId = requireOrganization(request);
+    requireRole(request, "ADMIN");
+    const actor = requireActor(request);
+    const { meterId } = request.params as { meterId: string };
+
+    const meter = await prisma.usageMeter.findFirst({
+      where: { id: meterId, organizationId, deletedAt: null },
+    });
+    if (!meter) throw BillingError.notFound("USAGE_METER_NOT_FOUND", "Usage meter");
+
+    const dependentPrices = await prisma.price.count({
+      where: { usageMeterId: meter.id, active: true },
+    });
+    if (dependentPrices > 0) {
+      throw new BillingError(
+        "INVALID_REQUEST",
+        `${dependentPrices} active price${dependentPrices === 1 ? " bills" : "s bill"} against this meter. ` +
+          "Archive it to stop new consumption from being recorded, repoint or archive those prices, then delete it."
+      );
+    }
+
+    await prisma.usageMeter.update({
+      where: { id: meter.id },
+      data: { active: false, deletedAt: new Date() },
+    });
+    await cache.invalidateOrganization(organizationId);
+
+    await recordAudit(prisma, {
+      organizationId,
+      actorType: actor.kind,
+      userId: actor.kind === "USER" ? actor.userId : null,
+      action: "usage_meter.deleted",
+      resource: "usage_meter",
+      resourceId: meter.id,
+      metadata: { code: meter.code },
+      ipAddress: request.ip,
+    });
+
+    return success({ deleted: true }, request.requestId);
   });
 
   // -- Ingestion -------------------------------------------------------------

@@ -3,17 +3,19 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Pencil } from "lucide-react";
 import { CURRENCIES } from "@tierstack/shared";
-import { archivePrice, setPlanActive } from "@/actions/catalogue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
+import { ToastFlash } from "@/components/toast-flash";
 import { apiFetchOrNull } from "@/lib/api";
 import { describeInterval, formatAmount, titleCase } from "@/lib/format";
-import type { Plan, UsageMeter } from "@/lib/types";
+import type { Plan, Session, UsageMeter } from "@/lib/types";
+import { DeletePlanForm } from "../delete-plan-form";
 import { EditPlanForm } from "../plan-form";
 import { CreatePriceForm } from "../price-form";
+import { TogglePlanActiveForm, TogglePriceActiveForm } from "../toggle-active-form";
 
 export const metadata: Metadata = { title: "Plan" };
 
@@ -26,27 +28,27 @@ function featuresToText(features: Record<string, unknown>): string {
     .join("\n");
 }
 
-export default async function PlanDetailPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ created?: string }>;
-}) {
+export default async function PlanDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { created } = await searchParams;
 
-  const [plan, meters] = await Promise.all([
+  const [plan, meters, session] = await Promise.all([
     apiFetchOrNull<Plan>(`/v1/plans/${encodeURIComponent(id)}`),
     apiFetchOrNull<UsageMeter[]>("/v1/usage-meters"),
+    apiFetchOrNull<Session>("/v1/auth/me"),
   ]);
   if (!plan) notFound();
+
+  // Matches the org the layout resolves as "current" — the first membership.
+  const myRole = session?.organizations?.[0]?.role;
+  const canDelete = myRole === "OWNER" || myRole === "ADMIN";
 
   const prices = plan.prices ?? [];
   const meterById = new Map((meters ?? []).map((meter) => [meter.id, meter]));
 
   return (
     <>
+      <ToastFlash param="created" title="Plan created." description="Add a price below to make it subscribable." />
+
       <Link
         href="/plans"
         className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -59,13 +61,10 @@ export default async function PlanDetailPage({
         title={plan.name}
         description={plan.description ?? "No description."}
         action={
-          <form action={setPlanActive}>
-            <input type="hidden" name="planId" value={plan.id} />
-            <input type="hidden" name="active" value={plan.active ? "false" : "true"} />
-            <Button type="submit" variant="outline" size="sm">
-              {plan.active ? "Archive plan" : "Restore plan"}
-            </Button>
-          </form>
+          <div className="flex items-start gap-2">
+            <TogglePlanActiveForm planId={plan.id} active={plan.active} />
+            {canDelete ? <DeletePlanForm planId={plan.id} /> : null}
+          </div>
         }
       />
 
@@ -76,12 +75,6 @@ export default async function PlanDetailPage({
           {prices.length} price{prices.length === 1 ? "" : "s"}
         </span>
       </div>
-
-      {created && prices.length === 0 ? (
-        <p className="mb-4 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
-          Plan created. It cannot be subscribed to until it has at least one price — add one below.
-        </p>
-      ) : null}
 
       <Card className="mb-4">
         <CardHeader>
@@ -161,14 +154,7 @@ export default async function PlanDetailPage({
                               Edit
                             </Button>
                           </Link>
-                          <form action={archivePrice}>
-                            <input type="hidden" name="priceId" value={price.id} />
-                            <input type="hidden" name="planId" value={plan.id} />
-                            <input type="hidden" name="active" value={price.active ? "false" : "true"} />
-                            <Button type="submit" variant="ghost" size="sm">
-                              {price.active ? "Archive" : "Restore"}
-                            </Button>
-                          </form>
+                          <TogglePriceActiveForm priceId={price.id} planId={plan.id} active={price.active} />
                         </div>
                       </TD>
                     </TR>

@@ -76,7 +76,7 @@ export function Pagination({
                 className={cn(
                   "tabular inline-flex h-8 min-w-8 items-center justify-center rounded-md px-2 text-xs",
                   entry === meta.page
-                    ? "bg-secondary font-medium text-secondary-foreground"
+                    ? "bg-primary/10 font-medium text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 )}
               >

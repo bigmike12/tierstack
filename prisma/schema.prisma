@@ -276,6 +276,11 @@ model Plan {
   /// Feature keys granted by this plan, consumed by the entitlement engine.
   features       Json    @default("{}")
   metadata       Json    @default("{}")
+  /// Set only once every subscription on this plan has reached a terminal
+  /// status. Never a hard delete — a plan's prices are permanently bound to
+  /// real invoices and payment attempts, so the row stays; this just hides it
+  /// and permanently frees the code from being reused.
+  deletedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -703,6 +708,10 @@ model UsageMeter {
   aggregation    UsageAggregation @default(SUM)
   active         Boolean          @default(true)
   metadata       Json             @default("{}")
+  /// Set only once no active price still bills against this meter. Never a
+  /// hard delete — every historical usage event references this row, and
+  /// dropping it would cascade-delete that consumption history.
+  deletedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

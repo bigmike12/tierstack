@@ -4,7 +4,9 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { createApiKey, revokeApiKey, type ActionState } from "@/actions/billing";
 import { Button } from "@/components/ui/button";
+import { ConfirmSubmitButton } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
+import { ActionToast } from "@/components/ui/toast";
 
 function Submit() {
   const { pending } = useFormStatus();
@@ -32,11 +34,7 @@ export function CreateKeyForm() {
         </div>
       ) : null}
 
-      {state.error ? (
-        <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {state.error}
-        </p>
-      ) : null}
+      <ActionToast state={state} />
 
       <form action={action} className="space-y-4">
         <Field label="Name">
@@ -64,12 +62,22 @@ export function CreateKeyForm() {
 }
 
 export function RevokeButton({ keyId }: { keyId: string }) {
+  const [state, action] = useActionState<ActionState, FormData>(revokeApiKey, {});
+
   return (
-    <form action={revokeApiKey}>
+    <form action={action}>
       <input type="hidden" name="keyId" value={keyId} />
-      <Button type="submit" variant="ghost" size="sm" className="text-destructive">
+      <ActionToast state={state} />
+      <ConfirmSubmitButton
+        variant="ghost"
+        size="sm"
+        className="text-destructive"
+        title="Revoke this key?"
+        description="Anything using it stops working immediately. This cannot be undone."
+        confirmLabel="Revoke"
+      >
         Revoke
-      </Button>
+      </ConfirmSubmitButton>
     </form>
   );
 }

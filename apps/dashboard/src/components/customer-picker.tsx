@@ -152,7 +152,7 @@ export function CustomerPicker({
                       onClick={() => choose(customer)}
                       className={cn(
                         "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted",
-                        active && "bg-secondary"
+                        active && "bg-primary/10"
                       )}
                     >
                       <Check

@@ -38,7 +38,7 @@ export default async function InvoicesPage({
         <div className="flex flex-wrap gap-2">
           <Link
             href={filterHref()}
-            className={`rounded-full border px-3 py-1 text-xs ${!status ? "border-foreground bg-secondary" : "border-border text-muted-foreground hover:bg-muted"}`}
+            className={`rounded-full border px-3 py-1 text-xs ${!status ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
           >
             All
           </Link>
@@ -46,7 +46,7 @@ export default async function InvoicesPage({
             <Link
               key={filter}
               href={filterHref(filter)}
-              className={`rounded-full border px-3 py-1 text-xs ${status === filter ? "border-foreground bg-secondary" : "border-border text-muted-foreground hover:bg-muted"}`}
+              className={`rounded-full border px-3 py-1 text-xs ${status === filter ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
             >
               {filter.toLowerCase()}
             </Link>

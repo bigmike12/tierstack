@@ -6,6 +6,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
+import { ToastFlash } from "@/components/toast-flash";
 import { apiFetchOrNull } from "@/lib/api";
 import { describeInterval, formatAmount, titleCase } from "@/lib/format";
 import type { Plan } from "@/lib/types";
@@ -26,6 +27,7 @@ export default async function PlansPage() {
 
   return (
     <>
+      <ToastFlash param="deleted" title="Plan deleted." />
       <PageHeader
         title="Plans and prices"
         description="A plan is the product; a price is one way to buy it. One plan can carry several."

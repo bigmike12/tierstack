@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import { changePassword, updateProfile, type ActionState } from "@/actions/billing";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { ActionToast } from "@/components/ui/toast";
 
 function Submit({ label, pendingLabel }: { label: string; pendingLabel: string }) {
   const { pending } = useFormStatus();
@@ -15,30 +16,12 @@ function Submit({ label, pendingLabel }: { label: string; pendingLabel: string }
   );
 }
 
-function FormMessage({ state }: { state: ActionState }) {
-  if (state.error) {
-    return (
-      <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-        {state.error}
-      </p>
-    );
-  }
-  if (state.message) {
-    return (
-      <p className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
-        {state.message}
-      </p>
-    );
-  }
-  return null;
-}
-
 export function ProfileForm({ name, email }: { name: string; email: string }) {
   const [state, action] = useActionState<ActionState, FormData>(updateProfile, {});
 
   return (
     <form action={action} className="space-y-4">
-      <FormMessage state={state} />
+      <ActionToast state={state} />
       <Field label="Name">
         <Input name="name" defaultValue={name} required maxLength={120} />
       </Field>
@@ -55,7 +38,7 @@ export function ChangePasswordForm() {
 
   return (
     <form action={action} className="space-y-4">
-      <FormMessage state={state} />
+      <ActionToast state={state} />
       <Field label="Current password">
         <Input name="currentPassword" type="password" required autoComplete="current-password" />
       </Field>

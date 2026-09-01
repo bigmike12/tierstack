@@ -1,13 +1,18 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { Pencil } from "lucide-react";
 import { CustomerPicker } from "@/components/customer-picker";
+import { ToastFlash } from "@/components/toast-flash";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, Mono, PageHeader, Stat } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate, titleCase } from "@/lib/format";
 import { emptyPage, type Paged } from "@/lib/list";
-import type { Customer, UsageMeter, UsageResponse } from "@/lib/types";
+import type { Customer, Session, UsageMeter, UsageResponse } from "@/lib/types";
+import { CreateMeterForm, DeleteMeterForm, ToggleMeterActiveForm } from "./meter-form";
 
 export const metadata: Metadata = { title: "Usage" };
 
@@ -18,13 +23,18 @@ export default async function UsagePage({
 }) {
   const { customerId } = await searchParams;
 
-  const [meters, customerList, recentEvents] = await Promise.all([
+  const [meters, customerList, recentEvents, session] = await Promise.all([
     apiFetchOrNull<UsageMeter[]>("/v1/usage-meters"),
     // Only the first page: the picker searches the rest on demand rather than
     // shipping every customer to the browser.
     apiFetchOrNull<Paged<Customer>>("/v1/customers?limit=20"),
     apiFetchOrNull<Paged<{ customerId: string; customer: Customer }>>("/v1/usage/events?limit=500"),
+    apiFetchOrNull<Session>("/v1/auth/me"),
   ]);
+
+  // Matches the org the layout resolves as "current" — the first membership.
+  const myRole = session?.organizations?.[0]?.role;
+  const canCreateMeter = myRole === "OWNER" || myRole === "ADMIN";
 
   const customerPage = customerList ?? emptyPage<Customer>();
 
@@ -55,16 +65,33 @@ export default async function UsagePage({
 
   return (
     <>
+      <ToastFlash param="meterUpdated" title="Meter updated." />
+      <ToastFlash param="meterDeleted" title="Meter deleted." />
+
       <PageHeader
         title="Usage"
         description="Recorded consumption for the current billing period."
       />
 
       {!meters || meters.length === 0 ? (
-        <EmptyState
-          title="No meters yet"
-          description="Create one with POST /v1/usage-meters, then attach it to a price to bill against it."
-        />
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>No meters yet</CardTitle>
+            <CardDescription>
+              A meter decides how its events are added up. Create one, then attach it to a price to bill
+              against it.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {canCreateMeter ? (
+              <CreateMeterForm />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Ask an organization admin or owner to create one — this is where they&apos;d do it.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       ) : (
         <>
           <Card className="mb-4">
@@ -83,6 +110,7 @@ export default async function UsagePage({
                     <TH>Unit</TH>
                     <TH>Aggregation</TH>
                     <TH>Status</TH>
+                    {canCreateMeter ? <TH className="text-right">&nbsp;</TH> : null}
                   </TR>
                 </THead>
                 <TBody>
@@ -97,11 +125,31 @@ export default async function UsagePage({
                       <TD>
                         {meter.active ? <Badge tone="success">Active</Badge> : <Badge>Inactive</Badge>}
                       </TD>
+                      {canCreateMeter ? (
+                        <TD className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Link href={`/usage/meters/${meter.id}/edit`}>
+                              <Button type="button" variant="ghost" size="sm">
+                                <Pencil aria-hidden />
+                                Edit
+                              </Button>
+                            </Link>
+                            <ToggleMeterActiveForm meterId={meter.id} active={meter.active} />
+                            <DeleteMeterForm meterId={meter.id} meterName={meter.name} />
+                          </div>
+                        </TD>
+                      ) : null}
                     </TR>
                   ))}
                 </TBody>
               </Table>
             </CardContent>
+            {canCreateMeter ? (
+              <div className="border-t border-border p-5">
+                <p className="mb-3 text-sm font-medium">Add another meter</p>
+                <CreateMeterForm />
+              </div>
+            ) : null}
           </Card>
 
           {customerPage.total > 0 ? (
