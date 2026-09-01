@@ -40,6 +40,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment configuration:\n${issues}\n\nCopy .env.example to .env and fill it in.`);
   }
   const value = parsed.data;
+  if (value.NODE_ENV === "production" && value.CORS_ORIGINS === "*") {
+    throw new Error(
+      "CORS_ORIGINS must be set to an explicit comma-separated origin list in production " +
+        '("*" combined with the credentialed cookie session would let any site ride a signed-in ' +
+        "dashboard session). Development keeps the wildcard default."
+    );
+  }
   return {
     ...value,
     corsOrigins: value.CORS_ORIGINS === "*" ? true : value.CORS_ORIGINS.split(",").map((o) => o.trim()),

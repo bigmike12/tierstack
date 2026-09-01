@@ -57,6 +57,9 @@ export const ERROR_CODES = {
   NO_ELIGIBLE_PAYMENT_PROVIDER: 400,
   UNSUPPORTED_PROVIDER_CAPABILITY: 400,
   PROVIDER_ERROR: 502,
+  /** The provider call did not complete (timeout/network failure) — whether it
+   *  actually processed is genuinely unknown until verified by reference. */
+  PROVIDER_TIMEOUT: 502,
   PAYMENT_FAILED: 402,
   NO_PAYMENT_METHOD: 400,
 

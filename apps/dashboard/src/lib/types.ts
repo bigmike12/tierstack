@@ -9,6 +9,21 @@ export interface Session {
   actor: "user" | "api_key";
   user?: { id: string; email: string; name: string };
   organizations: Organization[];
+  /** The org the request was actually scoped to — never assume array position. */
+  currentOrganizationId?: string | null;
+}
+
+/**
+ * The org a page should treat as "current". `organizations[0]` is plain
+ * membership order and does not track which org the org switcher has
+ * selected — this does, via `currentOrganizationId`, which the API resolves
+ * from the same cookie every other request is scoped by.
+ */
+export function currentOrganization(session: Session): Organization | undefined {
+  return (
+    session.organizations.find((org) => org.id === session.currentOrganizationId) ??
+    session.organizations[0]
+  );
 }
 
 export interface BillingSettings {

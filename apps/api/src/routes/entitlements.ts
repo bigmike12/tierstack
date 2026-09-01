@@ -120,6 +120,10 @@ export function registerEntitlementRoutes(
         plan: { select: { id: true, code: true, name: true } },
         customer: { select: { id: true, externalId: true, email: true } },
       },
+      // No dashboard pagination UI consumes this endpoint (it lists a small,
+      // developer-configured set of overrides, unlike the per-customer view
+      // above), but nothing should read an unbounded number of rows either.
+      take: 500,
     });
     return success(rows, request.requestId);
   });

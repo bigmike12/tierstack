@@ -11,7 +11,7 @@ import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { ToastFlash } from "@/components/toast-flash";
 import { apiFetchOrNull } from "@/lib/api";
 import { describeInterval, formatAmount, titleCase } from "@/lib/format";
-import type { Plan, Session, UsageMeter } from "@/lib/types";
+import { currentOrganization, type Plan, type Session, type UsageMeter } from "@/lib/types";
 import { DeletePlanForm } from "../delete-plan-form";
 import { EditPlanForm } from "../plan-form";
 import { CreatePriceForm } from "../price-form";
@@ -39,7 +39,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   if (!plan) notFound();
 
   // Matches the org the layout resolves as "current" — the first membership.
-  const myRole = session?.organizations?.[0]?.role;
+  const myRole = session ? currentOrganization(session)?.role : undefined;
   const canDelete = myRole === "OWNER" || myRole === "ADMIN";
 
   const prices = plan.prices ?? [];

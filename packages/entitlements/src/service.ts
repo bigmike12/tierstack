@@ -169,6 +169,52 @@ export interface CheckEntitlementParams {
 }
 
 /**
+ * Resolves one feature against an already-loaded context. Split out of
+ * `checkEntitlement` so a caller that has already paid for
+ * `loadEntitlementContext` once (`listCustomerEntitlements`, resolving every
+ * feature a customer holds) never pays for it again per feature key.
+ */
+async function resolveFeatureCheck(
+  prisma: PrismaClient,
+  organizationId: string,
+  customerId: string,
+  loaded: CachedContext,
+  featureKey: string,
+  requestedUnits?: number,
+  now?: Date
+): Promise<EntitlementCheck> {
+  // Live usage, only for the feature actually being checked, and only when the
+  // winning definition is quantity-bounded.
+  const relevant = loaded.definitions.filter((d) => d.featureKey === featureKey);
+  const meterCode = relevant.find((d) => d.meterCode)?.meterCode ?? null;
+
+  let usedUnits: number | null = null;
+  if (meterCode && loaded.context.currentPeriodStart && loaded.context.currentPeriodEnd) {
+    const meter = await prisma.usageMeter.findUnique({
+      where: { organizationId_code: { organizationId, code: meterCode } },
+    });
+    if (meter) {
+      usedUnits = await getPeriodUsage(prisma, {
+        organizationId,
+        customerId,
+        meterId: meter.id,
+        aggregation: meter.aggregation as never,
+        period: { start: loaded.context.currentPeriodStart, end: loaded.context.currentPeriodEnd },
+      });
+    }
+  }
+
+  return resolveEntitlement({
+    featureKey,
+    definitions: loaded.definitions,
+    context: loaded.context,
+    usedUnits,
+    ...(requestedUnits === undefined ? {} : { requestedUnits }),
+    ...(now ? { now } : {}),
+  });
+}
+
+/**
  * The endpoint a developer's application calls before letting a customer do
  * something. Definitions come from Redis when they are warm; consumption is
  * always read live from PostgreSQL.
@@ -196,35 +242,15 @@ export async function checkEntitlement(
     await cache?.write(params.organizationId, customer.id, loaded);
   }
 
-  // Live usage, only for the feature actually being checked, and only when the
-  // winning definition is quantity-bounded.
-  const relevant = loaded.definitions.filter((d) => d.featureKey === params.featureKey);
-  const meterCode = relevant.find((d) => d.meterCode)?.meterCode ?? null;
-
-  let usedUnits: number | null = null;
-  if (meterCode && loaded.context.currentPeriodStart && loaded.context.currentPeriodEnd) {
-    const meter = await prisma.usageMeter.findUnique({
-      where: { organizationId_code: { organizationId: params.organizationId, code: meterCode } },
-    });
-    if (meter) {
-      usedUnits = await getPeriodUsage(prisma, {
-        organizationId: params.organizationId,
-        customerId: customer.id,
-        meterId: meter.id,
-        aggregation: meter.aggregation as never,
-        period: { start: loaded.context.currentPeriodStart, end: loaded.context.currentPeriodEnd },
-      });
-    }
-  }
-
-  const result = resolveEntitlement({
-    featureKey: params.featureKey,
-    definitions: loaded.definitions,
-    context: loaded.context,
-    usedUnits,
-    ...(params.requestedUnits === undefined ? {} : { requestedUnits: params.requestedUnits }),
-    ...(params.now ? { now: params.now } : {}),
-  });
+  const result = await resolveFeatureCheck(
+    prisma,
+    params.organizationId,
+    customer.id,
+    loaded,
+    params.featureKey,
+    params.requestedUnits,
+    params.now
+  );
 
   return { ...result, customerId: customer.id, featureKey: params.featureKey, cached };
 }
@@ -240,13 +266,8 @@ export async function listCustomerEntitlements(
 
   const features: EntitlementCheck[] = [];
   for (const featureKey of keys) {
-    const result = await checkEntitlement(prisma, null, {
-      organizationId,
-      customerId,
-      featureKey,
-      requestedUnits: 0,
-    });
-    features.push(result);
+    const result = await resolveFeatureCheck(prisma, organizationId, customerId, loaded, featureKey, 0);
+    features.push({ ...result, customerId, featureKey, cached: false } as EntitlementCheck);
   }
   return { context: loaded.context, features };
 }

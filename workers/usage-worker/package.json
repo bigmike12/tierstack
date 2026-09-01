@@ -14,6 +14,7 @@
     "@tierstack/shared": "0.1.0",
     "@tierstack/usage": "0.1.0",
     "bullmq": "^5.34.6",
-    "ioredis": "^5.4.2"
+    "ioredis": "^5.4.2",
+    "tsx": "^4.19.2"
   }
 }

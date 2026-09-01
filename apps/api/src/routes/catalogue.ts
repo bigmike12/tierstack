@@ -244,7 +244,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     const currency = assertCurrency(body.currency);
 
     const plan = await prisma.plan.findFirst({
-      where: { organizationId, OR: [{ id: body.planId }, { code: body.planId }] },
+      where: { organizationId, deletedAt: null, OR: [{ id: body.planId }, { code: body.planId }] },
     });
     if (!plan) throw BillingError.notFound("PLAN_NOT_FOUND", "Plan");
 
@@ -255,7 +255,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
       const meter = await prisma.usageMeter.findUnique({
         where: { organizationId_code: { organizationId, code: body.usageMeterCode } },
       });
-      if (!meter) {
+      if (!meter || meter.deletedAt) {
         throw new BillingError("INVALID_REQUEST", `No usage meter with code "${body.usageMeterCode}".`);
       }
       usageMeterId = meter.id;
@@ -364,7 +364,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
         const meter = await prisma.usageMeter.findUnique({
           where: { organizationId_code: { organizationId, code: usageMeterCode } },
         });
-        if (!meter) {
+        if (!meter || meter.deletedAt) {
           throw new BillingError("INVALID_REQUEST", `No usage meter with code "${usageMeterCode}".`);
         }
         usageMeterId = meter.id;

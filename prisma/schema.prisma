@@ -592,7 +592,11 @@ model Invoice {
   updatedAt DateTime @updatedAt
 
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  customer     Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Financial records are never mutated in place once issued (see the file
+  // header) and must not vanish as a side effect of deleting the customer
+  // they bill either — only deleting the whole organization (which cascades
+  // through every one of its tables directly, this one included) removes them.
+  customer     Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
   subscription Subscription?     @relation(fields: [subscriptionId], references: [id])
   lineItems    InvoiceLineItem[]
   attempts     PaymentAttempt[]
@@ -678,7 +682,9 @@ model PaymentAttempt {
 
   organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   invoice       Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Same reasoning as Invoice.customer: a payment history is not something a
+  // customer deletion should be able to erase.
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
   paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
 
   @@unique([organizationId, provider, providerReference])
@@ -738,11 +744,18 @@ model UsageEvent {
   createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Same reasoning as Invoice.customer: consumption history that invoices
+  // were already built from is not something a customer deletion erases.
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
   meter        UsageMeter   @relation(fields: [meterId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, eventId])
   @@index([customerId, meterId, timestamp])
+  // The usage worker's backlog scan (`findMany`/`findFirst`/`count` all
+  // filtering on processedAt: null, ordered by createdAt) runs every tick
+  // against this append-only, highest-volume table — without this it is a
+  // full sequential scan that gets slower as history accumulates.
+  @@index([processedAt, createdAt])
   @@map("usage_events")
 }
 
@@ -933,7 +946,9 @@ model CreditLedgerEntry {
   createdAt      DateTime        @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Same reasoning as Invoice.customer: a ledger is not a ledger if deleting
+  // its subject can erase entries from it.
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
   invoice      Invoice?     @relation(fields: [invoiceId], references: [id])
 
   @@index([customerId, currency, createdAt])

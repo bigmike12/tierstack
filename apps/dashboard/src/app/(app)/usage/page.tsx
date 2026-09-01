@@ -11,7 +11,7 @@ import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate, titleCase } from "@/lib/format";
 import { emptyPage, type Paged } from "@/lib/list";
-import type { Customer, Session, UsageMeter, UsageResponse } from "@/lib/types";
+import { currentOrganization, type Customer, type Session, type UsageMeter, type UsageResponse } from "@/lib/types";
 import { CreateMeterForm, DeleteMeterForm, ToggleMeterActiveForm } from "./meter-form";
 
 export const metadata: Metadata = { title: "Usage" };
@@ -33,7 +33,7 @@ export default async function UsagePage({
   ]);
 
   // Matches the org the layout resolves as "current" — the first membership.
-  const myRole = session?.organizations?.[0]?.role;
+  const myRole = session ? currentOrganization(session)?.role : undefined;
   const canCreateMeter = myRole === "OWNER" || myRole === "ADMIN";
 
   const customerPage = customerList ?? emptyPage<Customer>();

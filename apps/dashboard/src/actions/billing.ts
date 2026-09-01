@@ -192,17 +192,21 @@ export async function deleteProvider(_prev: ActionState, formData: FormData): Pr
  * price at their next renewal. Pinning is the exception, for the customer who
  * was promised the rate they signed up on.
  */
-export async function setPricePinned(formData: FormData): Promise<void> {
+export async function setPricePinned(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const subscriptionId = String(formData.get("subscriptionId"));
   const pinned = formData.get("pinned") === "true";
 
-  await apiFetch(`/v1/subscriptions/${subscriptionId}/pin-price`, {
-    method: "POST",
-    body: JSON.stringify({ pinned }),
-  }).catch(() => undefined);
-
-  revalidatePath("/subscriptions");
-  revalidatePath(`/subscriptions/${subscriptionId}`);
+  try {
+    await apiFetch(`/v1/subscriptions/${subscriptionId}/pin-price`, {
+      method: "POST",
+      body: JSON.stringify({ pinned }),
+    });
+    revalidatePath("/subscriptions");
+    revalidatePath(`/subscriptions/${subscriptionId}`);
+    return { message: pinned ? "Price pinned." : "Now following price changes." };
+  } catch (error) {
+    return failure(error);
+  }
 }
 
 export async function testProvider(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -218,20 +222,35 @@ export async function testProvider(_prev: ActionState, formData: FormData): Prom
   }
 }
 
-export async function cancelSubscription(formData: FormData): Promise<void> {
-  await apiFetch(`/v1/subscriptions/${String(formData.get("subscriptionId"))}/cancel`, {
-    method: "POST",
-    body: JSON.stringify({ atPeriodEnd: formData.get("atPeriodEnd") === "true" }),
-  }).catch(() => undefined);
-  revalidatePath("/subscriptions");
+export async function cancelSubscription(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const subscriptionId = String(formData.get("subscriptionId"));
+  const atPeriodEnd = formData.get("atPeriodEnd") === "true";
+  try {
+    await apiFetch(`/v1/subscriptions/${subscriptionId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ atPeriodEnd }),
+    });
+    revalidatePath("/subscriptions");
+    revalidatePath(`/subscriptions/${subscriptionId}`);
+    return { message: atPeriodEnd ? "Will cancel at period end." : "Subscription canceled." };
+  } catch (error) {
+    return failure(error);
+  }
 }
 
-export async function resumeSubscription(formData: FormData): Promise<void> {
-  await apiFetch(`/v1/subscriptions/${String(formData.get("subscriptionId"))}/resume`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  }).catch(() => undefined);
-  revalidatePath("/subscriptions");
+export async function resumeSubscription(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const subscriptionId = String(formData.get("subscriptionId"));
+  try {
+    await apiFetch(`/v1/subscriptions/${subscriptionId}/resume`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    revalidatePath("/subscriptions");
+    revalidatePath(`/subscriptions/${subscriptionId}`);
+    return { message: "Cancellation revoked." };
+  } catch (error) {
+    return failure(error);
+  }
 }
 
 export async function retryInvoice(formData: FormData): Promise<void> {
@@ -256,12 +275,19 @@ export async function retryInvoice(formData: FormData): Promise<void> {
   revalidatePath("/dunning");
 }
 
-export async function voidInvoice(formData: FormData): Promise<void> {
-  await apiFetch(`/v1/invoices/${String(formData.get("invoiceId"))}/void`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  }).catch(() => undefined);
-  revalidatePath("/invoices");
+export async function voidInvoice(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const invoiceId = String(formData.get("invoiceId"));
+  try {
+    await apiFetch(`/v1/invoices/${invoiceId}/void`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    revalidatePath("/invoices");
+    revalidatePath(`/invoices/${invoiceId}`);
+    return { message: "Invoice voided." };
+  } catch (error) {
+    return failure(error);
+  }
 }
 
 export async function inviteMember(_prev: ActionState, formData: FormData): Promise<ActionState> {
