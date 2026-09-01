@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import { updateBillingSettings, type ActionState } from "@/actions/billing";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
+import { ActionToast } from "@/components/ui/toast";
 import type { BillingSettings } from "@/lib/types";
 
 function Submit() {
@@ -21,16 +22,7 @@ export function BillingPolicyForm({ settings }: { settings: BillingSettings }) {
 
   return (
     <form action={action} className="space-y-5">
-      {state.error ? (
-        <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {state.error}
-        </p>
-      ) : null}
-      {state.message ? (
-        <p className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
-          {state.message}
-        </p>
-      ) : null}
+      <ActionToast state={state} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Grace period (days)" hint="How long a failed subscription stays recoverable. Zero means no grace at all.">

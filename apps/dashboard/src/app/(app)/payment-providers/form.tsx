@@ -10,7 +10,9 @@ import {
   type ActionState,
 } from "@/actions/billing";
 import { Button } from "@/components/ui/button";
+import { ConfirmSubmitButton } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
+import { ActionToast } from "@/components/ui/toast";
 import type { ProviderConfig } from "@/lib/types";
 
 function Submit({ label }: { label: string }) {
@@ -30,19 +32,7 @@ export function ProviderForm() {
 
   return (
     <form action={action} className="space-y-4">
-      {state.error ? (
-        <p
-          role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-        >
-          {state.error}
-        </p>
-      ) : null}
-      {state.message ? (
-        <p className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
-          {state.message}
-        </p>
-      ) : null}
+      <ActionToast state={state} />
 
       <Field label="Provider">
         <Select name="provider" defaultValue="MOCK">
@@ -96,13 +86,22 @@ export function ProviderForm() {
   );
 }
 
-export function TestButton({ configId }: { configId: string }) {
+function TestSubmit() {
+  const { pending } = useFormStatus();
   return (
-    <form action={testProvider}>
+    <Button type="submit" variant="outline" size="sm" disabled={pending}>
+      {pending ? "Testing…" : "Test credentials"}
+    </Button>
+  );
+}
+
+export function TestButton({ configId }: { configId: string }) {
+  const [state, action] = useActionState<ActionState, FormData>(testProvider, {});
+  return (
+    <form action={action}>
       <input type="hidden" name="configId" value={configId} />
-      <Button type="submit" variant="outline" size="sm">
-        Test credentials
-      </Button>
+      <ActionToast state={state} />
+      <TestSubmit />
     </form>
   );
 }
@@ -171,14 +170,7 @@ export function ProviderEditor({ config }: { config: ProviderConfig }) {
               className="flex w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </Field>
-          {state.error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {state.error}
-            </p>
-          ) : null}
-          {state.message ? (
-            <p className="text-sm text-success">{state.message}</p>
-          ) : null}
+          <ActionToast state={state} />
           <Button type="submit" size="sm">
             Save changes
           </Button>
@@ -188,27 +180,16 @@ export function ProviderEditor({ config }: { config: ProviderConfig }) {
           className="mt-4 border-t border-border pt-4"
         >
           <input type="hidden" name="configId" value={config.id} />
-          {deleteState.error ? (
-            <p role="alert" className="mb-2 text-sm text-destructive">
-              {deleteState.error}
-            </p>
-          ) : null}
-          <Button
-            type="submit"
+          <ActionToast state={deleteState} />
+          <ConfirmSubmitButton
             variant="destructive"
             size="sm"
-            onClick={(event) => {
-              if (
-                !window.confirm(
-                  `Remove ${config.provider} (${config.environment})? Existing payment history is retained.`,
-                )
-              ) {
-                event.preventDefault();
-              }
-            }}
+            title="Remove this provider?"
+            description={`Removing ${config.provider} (${config.environment}) stops it from being used for new charges. Existing payment history is retained.`}
+            confirmLabel="Remove provider"
           >
             Remove provider
-          </Button>
+          </ConfirmSubmitButton>
         </form>
       </div>
     </details>

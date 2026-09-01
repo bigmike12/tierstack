@@ -133,6 +133,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     const plans = await prisma.plan.findMany({
       where: {
         organizationId,
+        deletedAt: null,
         ...(query.active === undefined ? {} : { active: query.active !== "false" }),
       },
       include: { prices: { where: { active: true } } },
@@ -145,7 +146,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     const organizationId = requireOrganization(request);
     const { planId } = request.params as { planId: string };
     const plan = await prisma.plan.findFirst({
-      where: { organizationId, OR: [{ id: planId }, { code: planId }] },
+      where: { organizationId, deletedAt: null, OR: [{ id: planId }, { code: planId }] },
       // Archived versions are included deliberately: the plan page shows the
       // lineage. Ordering is fixed so publishing a new version does not
       // reshuffle the table under you.
@@ -162,7 +163,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     const body = planSchema.partial().omit({ code: true }).parse(request.body);
 
     const plan = await prisma.plan.findFirst({
-      where: { organizationId, OR: [{ id: planId }, { code: planId }] },
+      where: { organizationId, deletedAt: null, OR: [{ id: planId }, { code: planId }] },
     });
     if (!plan) throw BillingError.notFound("PLAN_NOT_FOUND", "Plan");
 
@@ -171,6 +172,61 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     // on it is entitled to.
     await notifyEntitlementChange(organizationId, null);
     return success(updated, request.requestId);
+  });
+
+  /**
+   * Never a hard delete — a plan's prices are permanently bound to real
+   * invoices and payment attempts, and the database itself refuses to drop a
+   * row still referenced by one. This is the same shape as customer deletion:
+   * blocked while anyone is still a live subscriber, otherwise the plan (and
+   * every one of its prices) is deactivated and hidden for good. Archiving
+   * first stops new signups so existing subscribers can run out naturally;
+   * once none are left, the same action that would have archived it deletes
+   * it instead.
+   */
+  app.delete("/v1/plans/:planId", async (request) => {
+    const organizationId = requireOrganization(request);
+    requireRole(request, "ADMIN");
+    const actor = requireActor(request);
+    const { planId } = request.params as { planId: string };
+
+    const plan = await prisma.plan.findFirst({
+      where: { organizationId, deletedAt: null, OR: [{ id: planId }, { code: planId }] },
+      include: { prices: { select: { id: true } } },
+    });
+    if (!plan) throw BillingError.notFound("PLAN_NOT_FOUND", "Plan");
+
+    const priceIds = plan.prices.map((price) => price.id);
+    const liveSubscribers = priceIds.length
+      ? await prisma.subscription.count({
+          where: { priceId: { in: priceIds }, status: { in: ["TRIALING", "ACTIVE", "PAST_DUE", "GRACE_PERIOD"] } },
+        })
+      : 0;
+    if (liveSubscribers > 0) {
+      throw new BillingError(
+        "INVALID_REQUEST",
+        `${liveSubscribers} subscription${liveSubscribers === 1 ? " is" : "s are"} still active on this plan. ` +
+          "Archive it to stop new signups, then delete it once every subscriber has moved on."
+      );
+    }
+
+    await prisma.$transaction([
+      prisma.price.updateMany({ where: { planId: plan.id }, data: { active: false } }),
+      prisma.plan.update({ where: { id: plan.id }, data: { active: false, deletedAt: new Date() } }),
+    ]);
+
+    await recordAudit(prisma, {
+      organizationId,
+      actorType: actor.kind,
+      userId: actor.kind === "USER" ? actor.userId : null,
+      action: "plan.deleted",
+      resource: "plan",
+      resourceId: plan.id,
+      metadata: { code: plan.code },
+      ipAddress: request.ip,
+    });
+
+    return success({ deleted: true }, request.requestId);
   });
 
   // -- Prices ----------------------------------------------------------------

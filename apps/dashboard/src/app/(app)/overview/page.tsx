@@ -40,7 +40,7 @@ export default async function OverviewPage() {
     <>
       <PageHeader
         title="Overview"
-        description={`Computed directly from PostgreSQL over the last ${metrics.windowDays} days. Money is reported per currency — summing across currencies would not mean anything.`}
+        description={`Computed over the last ${metrics.windowDays} days. Money is reported per currency`}
       />
 
       {!hasAnything ? (

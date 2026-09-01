@@ -56,8 +56,8 @@ export function Nav() {
             <Link
               key={link.href}
               href={link.href}
-              className={`text-sm transition-colors hover:text-ink ${
-                pathname === link.href ? "text-ink" : "text-muted"
+              className={`text-sm transition-colors hover:text-accent ${
+                pathname === link.href ? "text-accent" : "text-muted"
               }`}
             >
               {link.label}
@@ -65,7 +65,7 @@ export function Nav() {
           ))}
           <a
             href={`${BRAND.appUrl}/register`}
-            className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-paper transition-opacity hover:opacity-88"
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-paper transition-colors hover:bg-accent-hover"
           >
             Start building
           </a>
@@ -110,7 +110,7 @@ export function Nav() {
             ))}
             <a
               href={`${BRAND.appUrl}/register`}
-              className="my-4 rounded-md bg-ink px-4 py-3 text-center text-sm font-medium text-paper"
+              className="my-4 rounded-md bg-accent px-4 py-3 text-center text-sm font-medium text-paper transition-colors hover:bg-accent-hover"
             >
               Start building
             </a>
@@ -136,13 +136,13 @@ export function Footer() {
 
           <nav className="flex flex-col gap-2.5 text-sm sm:text-right">
             {LINKS.map((link) => (
-              <Link key={link.href} href={link.href} className="text-muted transition-colors hover:text-ink">
+              <Link key={link.href} href={link.href} className="text-muted transition-colors hover:text-accent">
                 {link.label}
               </Link>
             ))}
             <a
               href={`${BRAND.appUrl}/login`}
-              className="text-muted transition-colors hover:text-ink"
+              className="text-muted transition-colors hover:text-accent"
             >
               Sign in
             </a>

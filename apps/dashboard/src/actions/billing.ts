@@ -103,9 +103,14 @@ export async function createApiKey(_prev: ActionState, formData: FormData): Prom
   }
 }
 
-export async function revokeApiKey(formData: FormData): Promise<void> {
-  await apiFetch(`/v1/api-keys/${String(formData.get("keyId"))}`, { method: "DELETE" }).catch(() => undefined);
+export async function revokeApiKey(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    await apiFetch(`/v1/api-keys/${String(formData.get("keyId"))}`, { method: "DELETE" });
+  } catch (error) {
+    return failure(error);
+  }
   revalidatePath("/api-keys");
+  return { message: "Key revoked." };
 }
 
 export async function configureProvider(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -200,11 +205,17 @@ export async function setPricePinned(formData: FormData): Promise<void> {
   revalidatePath(`/subscriptions/${subscriptionId}`);
 }
 
-export async function testProvider(formData: FormData): Promise<void> {
-  await apiFetch(`/v1/payment-providers/${String(formData.get("configId"))}/test`, {
-    method: "POST",
-  }).catch(() => undefined);
-  revalidatePath("/payment-providers");
+export async function testProvider(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const result = await apiFetch<{ ok: boolean; message: string }>(
+      `/v1/payment-providers/${String(formData.get("configId"))}/test`,
+      { method: "POST" }
+    );
+    revalidatePath("/payment-providers");
+    return result.ok ? { message: result.message } : { error: result.message };
+  } catch (error) {
+    return failure(error);
+  }
 }
 
 export async function cancelSubscription(formData: FormData): Promise<void> {

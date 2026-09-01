@@ -63,7 +63,7 @@ export function PrimaryLink({ children = "Start building" }: { children?: ReactN
   return (
     <a
       href={`${BRAND.appUrl}/register`}
-      className="rounded-md bg-ink px-6 py-3 text-sm font-medium text-paper transition-opacity hover:opacity-88"
+      className="rounded-md bg-accent px-6 py-3 text-sm font-medium text-paper transition-colors hover:bg-accent-hover"
     >
       {children}
     </a>
@@ -72,7 +72,7 @@ export function PrimaryLink({ children = "Start building" }: { children?: ReactN
 
 export function SecondaryLink({ href, children }: { href: string; children: ReactNode }) {
   const className =
-    "rounded-md border border-line px-6 py-3 text-sm font-medium transition-colors hover:border-ink";
+    "rounded-md border border-line px-6 py-3 text-sm font-medium transition-colors hover:border-accent hover:text-accent";
   return href.startsWith("/") ? (
     <Link href={href} className={className}>
       {children}

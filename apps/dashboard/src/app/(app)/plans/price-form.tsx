@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { createPrice, updatePrice, type CatalogueState } from "@/actions/catalogue";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
+import { ActionToast } from "@/components/ui/toast";
 import type { Price } from "@/lib/types";
-import { Alert } from "./plan-form";
 
 const MODELS = [
   { value: "FLAT_RECURRING", label: "Flat recurring", hint: "One amount every period." },
@@ -147,7 +148,7 @@ function PriceForm({
     <form action={action} className="space-y-5">
       <input type="hidden" name="planId" value={planId} />
       {price ? <input type="hidden" name="priceId" value={price.id} /> : null}
-      <Alert state={state} />
+      <ActionToast state={state} />
 
       {editing ? (
         versioned ? (
@@ -269,7 +270,10 @@ function PriceForm({
 
           {meters.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No usage meters exist yet. Create one with <code className="font-mono">POST /v1/usage-meters</code>{" "}
+              No usage meters exist yet.{" "}
+              <Link href="/usage" className="underline underline-offset-4">
+                Create one on the Usage page
+              </Link>{" "}
               before pricing against consumption — a metered price with no meter can never be billed, so the
               API rejects it rather than accepting a price that quietly charges nothing.
             </p>
