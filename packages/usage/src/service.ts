@@ -294,14 +294,19 @@ export async function createMeter(
 ) {
   const aggregation = assertAggregation(params.aggregation ?? "SUM");
 
+  // The (organizationId, code) unique constraint is not partial on deletedAt,
+  // so a soft-deleted meter's code is never actually free — check without the
+  // deletedAt filter to raise a clean ALREADY_EXISTS instead of a raw P2002.
   const existingCode = await prisma.usageMeter.findFirst({
-    where: { organizationId: params.organizationId, code: params.code, deletedAt: null },
-    select: { id: true },
+    where: { organizationId: params.organizationId, code: params.code },
+    select: { id: true, deletedAt: true },
   });
   if (existingCode) {
     throw new BillingError(
       "ALREADY_EXISTS",
-      `A meter with code "${params.code}" already exists. Edit it instead of creating a second one.`
+      existingCode.deletedAt
+        ? `Meter code "${params.code}" was used by a deleted meter and cannot be reused.`
+        : `A meter with code "${params.code}" already exists. Edit it instead of creating a second one.`
     );
   }
   await assertMeterNameAvailable(prisma, { organizationId: params.organizationId, name: params.name });

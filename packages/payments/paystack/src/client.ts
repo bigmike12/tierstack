@@ -89,12 +89,15 @@ export class HttpPaystackTransport implements PaystackTransport {
         // still have been processed by Paystack. The caller must verify by
         // reference rather than assume either outcome.
         throw new BillingError(
-          "PROVIDER_ERROR",
+          "PROVIDER_TIMEOUT",
           `Paystack did not respond within ${this.timeoutMs}ms. Verify the reference before retrying.`
         );
       }
+      // A connection that dropped mid-request is exactly as ambiguous as a
+      // timeout — the bytes may have already reached Paystack — so this gets
+      // the same "verify, don't assume" treatment rather than PROVIDER_ERROR.
       throw new BillingError(
-        "PROVIDER_ERROR",
+        "PROVIDER_TIMEOUT",
         `Could not reach Paystack: ${error instanceof Error ? error.message : "unknown error"}.`
       );
     } finally {

@@ -8,6 +8,14 @@ export interface IdempotencyOptions {
   ttlHours: number;
 }
 
+/**
+ * A process that dies between creating this row and either `complete()` or
+ * `releaseIdempotency()` leaves it wedged IN_PROGRESS with no caught error to
+ * clear it. Anything older than this is reclaimed rather than making a
+ * legitimate retry wait out the full key TTL (up to 24h by default).
+ */
+const STALE_IN_PROGRESS_MS = 5 * 60_000;
+
 function canonicalise(value: unknown): string {
   if (value === null || value === undefined) return "null";
   if (typeof value !== "object") return JSON.stringify(value);
@@ -75,10 +83,20 @@ export async function withIdempotency(
       reply.header("idempotent-replay", "true");
       return { replay: true, status: existing.responseStatus ?? 200, body: existing.response };
     }
-    throw new BillingError(
-      "IDEMPOTENCY_REQUEST_IN_PROGRESS",
-      "A request with this Idempotency-Key is still in flight. Retry shortly."
-    );
+    const isStale = Date.now() - existing.createdAt.getTime() > STALE_IN_PROGRESS_MS;
+    if (!isStale) {
+      throw new BillingError(
+        "IDEMPOTENCY_REQUEST_IN_PROGRESS",
+        "A request with this Idempotency-Key is still in flight. Retry shortly."
+      );
+    }
+    // Reclaim it and fall through to create a fresh row below. A concurrent
+    // reclaimer racing this one is still resolved correctly: the loser's
+    // `create` hits the unique constraint and reports in-progress, same as
+    // any other concurrent identical request.
+    await options.prisma.idempotencyKey
+      .deleteMany({ where: { id: existing.id, status: "IN_PROGRESS" } })
+      .catch(() => undefined);
   }
 
   try {

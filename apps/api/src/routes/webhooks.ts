@@ -98,7 +98,10 @@ export function registerWebhookRoutes(
       const event = await adapter.normalizeWebhook(verification.payload);
 
       // Unique on (organizationId, provider, providerEventId): a replayed
-      // delivery collides here and is acknowledged without reprocessing.
+      // delivery collides here. A delivery that previously reached a terminal
+      // success (or was deliberately ignored) is acknowledged without
+      // reprocessing — but one that previously failed gets exactly the retry
+      // it's asking for, not a duplicate answer that hides the failure forever.
       const existing = await prisma.webhookEvent.findUnique({
         where: {
           organizationId_provider_providerEventId: {
@@ -108,25 +111,37 @@ export function registerWebhookRoutes(
           },
         },
       });
-      if (existing) {
+      if (existing && existing.status !== "FAILED") {
         return reply.send(
           success({ received: true, duplicate: true, status: existing.status }, request.requestId)
         );
       }
 
-      const record = await prisma.webhookEvent.create({
-        data: {
-          id: newId("webhookEvent"),
-          organizationId,
-          provider,
-          providerEventId: event.providerEventId,
-          eventType: event.rawEventType,
-          rawPayload: safeJson(rawBody) as never,
-          signatureVerified: true,
-          status: "PROCESSING",
-          processingAttempts: 1,
-        },
-      });
+      const record = existing
+        ? await prisma.webhookEvent.update({
+            where: { id: existing.id },
+            data: {
+              eventType: event.rawEventType,
+              rawPayload: safeJson(rawBody) as never,
+              signatureVerified: true,
+              status: "PROCESSING",
+              processingAttempts: { increment: 1 },
+              errorMessage: null,
+            },
+          })
+        : await prisma.webhookEvent.create({
+            data: {
+              id: newId("webhookEvent"),
+              organizationId,
+              provider,
+              providerEventId: event.providerEventId,
+              eventType: event.rawEventType,
+              rawPayload: safeJson(rawBody) as never,
+              signatureVerified: true,
+              status: "PROCESSING",
+              processingAttempts: 1,
+            },
+          });
 
       try {
         if (event.reference && event.type !== "UNKNOWN") {

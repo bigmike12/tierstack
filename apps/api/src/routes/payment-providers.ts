@@ -66,6 +66,12 @@ export function registerPaymentProviderRoutes(
     requireRole(request, "ADMIN");
     const actor = requireActor(request);
     const body = createSchema.parse(request.body);
+    if (body.provider === "MOCK" && body.environment === "LIVE") {
+      throw new BillingError(
+        "INVALID_REQUEST",
+        "The mock provider settles nothing for real and cannot be configured on the LIVE rail."
+      );
+    }
 
     const encrypted = encryptCredentials(body.credentials, organizationId, config.ENCRYPTION_KEY);
 

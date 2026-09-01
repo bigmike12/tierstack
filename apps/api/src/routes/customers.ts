@@ -89,6 +89,7 @@ export function registerCustomerRoutes(app: FastifyInstance, prisma: PrismaClien
         where: { customerId: customer.id },
         include: { price: { include: { plan: true } } },
         orderBy: { createdAt: "desc" },
+        take: 20,
       }),
       prisma.invoice.findMany({
         where: { customerId: customer.id },

@@ -126,6 +126,8 @@ export function registerOrganizationRoutes(
     const organizationId = requireOrganization(request);
     requireRole(request, "ADMIN");
     const body = inviteSchema.parse(request.body);
+    // Only an owner may hand out ownership, same rule as the role-change endpoint.
+    if (body.role === "OWNER") requireRole(request, "OWNER");
     const actor = requireActor(request);
 
     const { token, tokenHash } = generateSessionToken();

@@ -13,6 +13,7 @@ import { loadRootEnv } from "@tierstack/shared";
 loadRootEnv();
 
 import { expireGracePeriods, expireIncompleteSubscriptions } from "../packages/billing/src";
+import { requestHash } from "../apps/api/src/plugins/idempotency";
 import { LogEmailTransport } from "../packages/notifications/src";
 import { runDunningRetries } from "../workers/billing-worker/src/jobs";
 import { runNotifications } from "../workers/billing-worker/src/notifications";
@@ -204,6 +205,64 @@ async function main(): Promise<void> {
   const badKey = await call("GET", "/v1/plans", { headers: { authorization: "Bearer sk_test_notarealkeyatall1234" } });
   check("an unknown key is rejected", badKey.status === 401 && badKey.body.error.code === "INVALID_API_KEY");
 
+  // -- 4b. Member invites and role escalation --------------------------------
+  section("4b. Member invites and role escalation");
+
+  // The invite email is only ever printed (no RESEND_API_KEY locally), so the
+  // token is captured off that exact line rather than exposed by the API.
+  async function captureInviteToken(fn: () => Promise<unknown>): Promise<string | null> {
+    const original = console.log;
+    let captured: string | null = null;
+    console.log = (line?: unknown) => {
+      if (typeof line === "string") {
+        const match = /\/invite\/([A-Za-z0-9_-]+)/.exec(line);
+        if (match) captured = match[1]!;
+      }
+    };
+    try {
+      await fn();
+    } finally {
+      console.log = original;
+    }
+    return captured;
+  }
+
+  let adminInvite = { status: 0, body: {} as Json };
+  const adminToken = await captureInviteToken(async () => {
+    adminInvite = await call("POST", "/v1/organizations/current/members", {
+      headers: asUser(),
+      payload: { email: `admin+${stamp}@example.test`, name: "E2E Admin", role: "ADMIN" },
+    });
+  });
+  check("an admin can be invited", adminInvite.status === 201 && Boolean(adminToken), adminInvite.body);
+
+  const adminAccept = await app.inject({
+    method: "POST",
+    url: `/v1/invites/${adminToken}/accept`,
+    headers: { "content-type": "application/json" },
+    payload: JSON.stringify({ password: "correct-horse-battery-staple" }),
+  });
+  const adminCookie = adminAccept.cookies[0]
+    ? `${adminAccept.cookies[0].name}=${adminAccept.cookies[0].value}`
+    : "";
+  check("the invited admin can accept and sign in", adminAccept.statusCode === 200 && Boolean(adminCookie));
+
+  const escalation = await call("POST", "/v1/organizations/current/members", {
+    headers: { cookie: adminCookie },
+    payload: { email: `wannabe-owner+${stamp}@example.test`, name: "Wannabe Owner", role: "OWNER" },
+  });
+  check(
+    "an admin cannot invite someone straight in as owner",
+    escalation.status === 403 && escalation.body.error?.code === "INSUFFICIENT_PERMISSIONS",
+    escalation.body
+  );
+
+  const legitimateInvite = await call("POST", "/v1/organizations/current/members", {
+    headers: { cookie: adminCookie },
+    payload: { email: `member+${stamp}@example.test`, name: "E2E Member" },
+  });
+  check("an admin can still invite an ordinary member", legitimateInvite.status === 201, legitimateInvite.body);
+
   // -- 5. Catalogue ----------------------------------------------------------
   section("5. Plans and prices");
 
@@ -232,6 +291,23 @@ async function main(): Promise<void> {
   check("one plan carries several prices", [priceMonthly, priceAnnual, priceUsd, priceQuarterly].every((r) => r.status === 201));
   check("multiple currencies on one plan", priceUsd.body.data.currency === "USD");
   check("custom-day intervals are supported", priceQuarterly.body.data.intervalUnit === "DAY" && priceQuarterly.body.data.intervalCount === 90);
+
+  // A soft-deleted plan is hidden, not gone — its prices stay bound to real
+  // invoices — but it must not be resurrectable by creating a fresh price
+  // against its still-live id/code.
+  const ghostPlan = await call("POST", "/v1/plans", { headers: asKey(), payload: { code: "ghost", name: "Ghost" } });
+  const ghostDeleted = await call("DELETE", `/v1/plans/${ghostPlan.body.data.id}`, { headers: asUser() });
+  check("a plan can be deleted", ghostDeleted.status === 200, ghostDeleted.body);
+
+  const priceOnDeletedPlan = await call("POST", "/v1/prices", {
+    headers: asKey(),
+    payload: { planId: "ghost", code: "ghost_monthly_ngn", currency: "NGN", unitAmount: 100_000, interval: "MONTHLY" },
+  });
+  check(
+    "a price cannot be created against a deleted plan",
+    priceOnDeletedPlan.status === 404 && priceOnDeletedPlan.body.error?.code === "PLAN_NOT_FOUND",
+    priceOnDeletedPlan.body
+  );
 
   const teamPlan = await call("POST", "/v1/plans", { headers: asKey(), payload: { code: "team", name: "Team" } });
   const seatPrice = await call("POST", "/v1/prices", {
@@ -326,6 +402,39 @@ async function main(): Promise<void> {
     payload: { customer: { externalId: "user_83921", email: "jonathan@example.test" }, priceId: "pro_annual_ngn" },
   });
   check("same key + different body is rejected", conflict.body.error?.code === "IDEMPOTENCY_KEY_REUSE", conflict.body);
+
+  // A row left IN_PROGRESS by a process that crashed mid-request (no catch
+  // block ever ran to release it) must not block a legitimate retry for the
+  // rest of the key's TTL.
+  const staleKey = `stale-idem-${stamp}`;
+  const stalePayload = {
+    customer: { externalId: `user_stale_${stamp}`, email: `stale-${stamp}@example.test` },
+    priceId: "pro_monthly_ngn",
+  };
+  await prisma.idempotencyKey.create({
+    data: {
+      id: `idem_stale_${stamp}`,
+      organizationId,
+      key: staleKey,
+      endpoint: "POST /v1/subscriptions",
+      // The plugin hashes over `${method} ${endpoint} ${body}` where
+      // `endpoint` is itself already "METHOD /path" — replicate that exact
+      // (if slightly redundant) input or the lookup sees a body mismatch.
+      requestHash: requestHash("POST", "POST /v1/subscriptions", stalePayload),
+      status: "IN_PROGRESS",
+      createdAt: new Date(Date.now() - 6 * 60_000),
+      expiresAt: new Date(Date.now() + 24 * 3_600_000),
+    },
+  });
+  const staleRetry = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": staleKey }),
+    payload: stalePayload,
+  });
+  check(
+    "a stale IN_PROGRESS idempotency key is reclaimed rather than blocking forever",
+    staleRetry.status === 201,
+    staleRetry.body
+  );
 
   // -- 9. Renewal on a stored payment method ---------------------------------
   section("9. Renewal charges the stored payment method");
@@ -766,6 +875,19 @@ async function main(): Promise<void> {
   );
   check("they still pay the old amount for the period they are in", stillOnOld.body.data?.price?.unitAmount === 750_000);
   check("that period was already invoiced at the old amount", stillOnOld.body.data?.price?.unitAmount === 750_000);
+
+  // Versioning only means anything if nobody can be moved back onto a
+  // retired version by id — otherwise a stale client or a scripted change
+  // silently re-prices a customer onto numbers the merchant took down.
+  const moveOntoArchived = await call("POST", `/v1/subscriptions/${editSubscriptionId}/change-plan`, {
+    headers: asKey({ "idempotency-key": `move-archived-${stamp}` }),
+    payload: { priceId: editable.body.data.id },
+  });
+  check(
+    "a subscriber cannot be moved onto an archived price version",
+    moveOntoArchived.status >= 400 && moveOntoArchived.body.error?.code === "INVALID_REQUEST",
+    moveOntoArchived.body
+  );
 
   // The point of versioning is not that subscribers never move — it is that
   // they move at a renewal boundary rather than mid-period.
@@ -1518,6 +1640,77 @@ async function main(): Promise<void> {
 
   const events = await prisma.webhookEvent.count({ where: { organizationId, status: "PROCESSED" } });
   check("exactly one webhook event was processed", events === 1, { events });
+
+  // A delivery that failed the first time (a transient DB error, a momentary
+  // provider blip) is not the same as a genuine replay of one that already
+  // succeeded — the dedupe check must retry it, not swallow it silently.
+  const retrySub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `wh-retry-${stamp}` }),
+    payload: {
+      customer: { externalId: "user_webhook_retry", email: "webhook-retry@example.test" },
+      priceId: "pro_monthly_ngn",
+    },
+  });
+  const retryRef = retrySub.body.data.payment.reference;
+  await call("POST", `/mock/checkout/${retryRef}/complete`, { payload: { outcome: "SUCCESS" } });
+  const retryTxn = JSON.parse((await redis.get(`mock:txn:${retryRef}`)) ?? "null");
+  const retryEventId = `mock_evt_${retryTxn.providerReference}_SUCCEEDED`;
+  const retryEventBody = JSON.stringify({
+    id: retryEventId,
+    event: "payment.succeeded",
+    createdAt: new Date().toISOString(),
+    data: {
+      reference: retryRef,
+      providerReference: retryTxn.providerReference,
+      amount: retryTxn.amount,
+      currency: retryTxn.currency,
+      status: "SUCCEEDED",
+      method: retryTxn.method,
+      paidAt: retryTxn.paidAt,
+      paymentMethodRef: retryTxn.paymentMethodRef,
+    },
+  });
+  const retrySignature = createHmac("sha256", "whsec_e2e").update(retryEventBody).digest("hex");
+
+  // Simulate a delivery that failed the first time it was tried — same shape
+  // the handler itself writes when `applyPaymentResult` throws.
+  await prisma.webhookEvent.create({
+    data: {
+      id: `we_retry_${stamp}`,
+      organizationId,
+      provider: "MOCK",
+      providerEventId: retryEventId,
+      eventType: "payment.succeeded",
+      rawPayload: { unparsed: "n/a" } as never,
+      signatureVerified: true,
+      status: "FAILED",
+      processingAttempts: 1,
+      errorMessage: "simulated transient failure",
+    },
+  });
+
+  const retried = await app.inject({
+    method: "POST",
+    url: "/webhooks/mock",
+    headers: { "content-type": "application/json", "x-mock-signature": retrySignature },
+    payload: retryEventBody,
+  });
+  check(
+    "a redelivered event that previously failed is reprocessed, not swallowed as a duplicate",
+    retried.statusCode === 200 && retried.json().data?.duplicate !== true,
+    retried.body.slice(0, 300)
+  );
+
+  const retriedEvent = await prisma.webhookEvent.findUnique({
+    where: {
+      organizationId_provider_providerEventId: { organizationId, provider: "MOCK", providerEventId: retryEventId },
+    },
+  });
+  check(
+    "the retry reaches PROCESSED and records a second attempt, not a fresh row",
+    retriedEvent?.status === "PROCESSED" && retriedEvent?.processingAttempts === 2,
+    retriedEvent
+  );
 
   // Paystack cannot carry the underscore in a `pay_...` id and is sent a dashed
   // reference instead. The intake resolves the organization from the raw body

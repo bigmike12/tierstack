@@ -5,7 +5,7 @@ import { DescriptionList, Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatDate } from "@/lib/format";
-import type { BillingSettings, Member, Organization, Session } from "@/lib/types";
+import { currentOrganization, type BillingSettings, type Member, type Organization, type Session } from "@/lib/types";
 import { BillingPolicyForm } from "./form";
 import { InviteMemberForm } from "./invite-form";
 import { ChangePasswordForm, ProfileForm } from "./profile-form";
@@ -21,7 +21,7 @@ export default async function SettingsPage() {
     apiFetchOrNull<Session>("/v1/auth/me"),
   ]);
   // Matches the org the layout resolves as "current" — the first membership.
-  const myRole = session?.organizations?.[0]?.role;
+  const myRole = session ? currentOrganization(session)?.role : undefined;
   const canInvite = myRole === "OWNER" || myRole === "ADMIN";
 
   return (

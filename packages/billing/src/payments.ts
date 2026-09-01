@@ -139,11 +139,14 @@ export async function attemptInvoicePayment(
         where: {
           invoiceId: invoice.id,
           status: "PROCESSING",
-          // Long enough to cover a real provider round-trip, short enough that
-          // a crashed process cannot wedge this invoice shut forever — it
-          // simply becomes collectable again, same as any other stuck attempt
-          // the reconciliation job would pick up.
-          createdAt: { gte: new Date(Date.now() - 2 * 60_000) },
+          // Matches runPaymentReconciliation's staleBefore window: an attempt
+          // left PROCESSING by an ambiguous provider timeout stays blocked
+          // here right up until reconciliation is due to verify it by
+          // reference, so a retry can never race ahead of that check and
+          // mint a second charge. Short enough that a crashed process cannot
+          // wedge this invoice shut forever — it simply becomes collectable
+          // again, same as any other stuck attempt reconciliation picks up.
+          createdAt: { gte: new Date(Date.now() - 5 * 60_000) },
         },
       });
       if (inFlight) {
@@ -218,6 +221,15 @@ export async function attemptInvoicePayment(
             );
       lastError = billingError;
 
+      if (billingError.code === "PROVIDER_TIMEOUT") {
+        // Whether this charge actually landed at the provider is unknown, so
+        // it must not be recorded as FAILED (that would let a retry mint a
+        // second, unrelated charge on top of one that may have already
+        // succeeded) and must not fail over to a different rail either. The
+        // attempt stays PROCESSING; reconciliation verifies it by reference.
+        break;
+      }
+
       await prisma.paymentAttempt.update({
         where: { id: attempt.id },
         data: {
@@ -231,6 +243,12 @@ export async function attemptInvoicePayment(
       // A pinned attempt must not fall through to another rail.
       if (paymentMethod) break;
     }
+  }
+
+  if (lastError?.code === "PROVIDER_TIMEOUT") {
+    // Not a known failure: don't touch the invoice or notify the customer.
+    // The caller sees a 502 and reconciliation resolves the attempt shortly.
+    throw lastError;
   }
 
   await handlePaymentFailure(prisma, {
@@ -266,6 +284,18 @@ export async function applyPaymentResult(
     if (!attempt) throw BillingError.notFound("PAYMENT_ATTEMPT_NOT_FOUND", "Payment attempt");
 
     const invoice = attempt.invoice;
+
+    // A webhook delivery and the reconciliation sweep can both resolve the
+    // same attempt within moments of each other. Once it has reached a
+    // terminal state this is a no-op rather than a second application of the
+    // payment to the invoice and a second round of merchant-facing webhooks.
+    if (attempt.status === "SUCCEEDED" || attempt.status === "FAILED" || attempt.status === "CANCELED") {
+      return {
+        invoiceStatus: invoice.status,
+        subscriptionStatus: invoice.subscription?.status as SubscriptionStatus | undefined,
+      };
+    }
+
     const result = params.result;
 
     if (result.status === "SUCCEEDED") {

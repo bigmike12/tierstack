@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { retryInvoice, voidInvoice } from "@/actions/billing";
+import { retryInvoice } from "@/actions/billing";
+import { VoidInvoiceForm } from "./invoice-actions";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,12 +52,7 @@ export default async function InvoicePage({
                   Attempt payment
                 </Button>
               </form>
-              <form action={voidInvoice}>
-                <input type="hidden" name="invoiceId" value={invoice.id} />
-                <Button type="submit" variant="outline" size="sm">
-                  Void
-                </Button>
-              </form>
+              <VoidInvoiceForm invoiceId={invoice.id} />
             </div>
           ) : null
         }

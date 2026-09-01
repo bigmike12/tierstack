@@ -218,6 +218,12 @@ export function registerAuthRoutes(app: FastifyInstance, prisma: PrismaClient, c
       {
         actor: "user",
         user,
+        // Resolved by the auth plugin from the `x-organization-id` the
+        // request actually carried (falling back to the first membership
+        // when none was sent) — the org a client should treat as "current"
+        // is this, never array position, since `organizations` below is in
+        // plain membership order and carries no signal about selection.
+        currentOrganizationId: request.organizationId ?? memberships[0]?.organizationId ?? null,
         organizations: memberships.map((m) => ({
           id: m.organizationId,
           name: m.organization.name,

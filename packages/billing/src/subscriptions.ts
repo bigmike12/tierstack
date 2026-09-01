@@ -78,6 +78,9 @@ export async function createSubscription(
     if (!price.active) {
       throw new BillingError("INVALID_REQUEST", `Price "${price.code}" is not active.`);
     }
+    if (price.plan.deletedAt) {
+      throw new BillingError("INVALID_REQUEST", `Plan "${price.plan.code}" has been deleted.`);
+    }
 
     const snapshot = toPriceSnapshot(price);
     assertBillablePriceModel(snapshot);
@@ -457,6 +460,12 @@ export async function changePlan(prisma: PrismaClient, params: ChangePlanParams)
       include: { plan: true },
     });
     if (!newPrice) throw BillingError.notFound("PRICE_NOT_FOUND", "Price");
+    if (!newPrice.active) {
+      throw new BillingError("INVALID_REQUEST", `Price "${newPrice.code}" is not active.`);
+    }
+    if (newPrice.plan.deletedAt) {
+      throw new BillingError("INVALID_REQUEST", `Plan "${newPrice.plan.code}" has been deleted.`);
+    }
 
     const oldSnapshot = toPriceSnapshot(subscription.price);
     const newSnapshot = toPriceSnapshot(newPrice);

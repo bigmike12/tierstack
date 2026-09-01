@@ -7,7 +7,7 @@ import { ScrollReset } from "@/components/scroll-reset";
 import { Wordmark } from "@/components/wordmark";
 import { Button } from "@/components/ui/button";
 import { apiFetchOrNull } from "@/lib/api";
-import type { Session } from "@/lib/types";
+import { currentOrganization, type Session } from "@/lib/types";
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Tierstack";
 const billingEnv = (process.env.BILLING_ENV ?? "test").toUpperCase();
@@ -17,7 +17,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!session || session.actor !== "user") redirect("/login");
 
   const organizations = session.organizations ?? [];
-  const current = organizations[0];
+  const current = currentOrganization(session);
 
   return (
     // Pinned to the viewport rather than sized to it: a dvh vs. body-height

@@ -17,4 +17,6 @@ export interface ListParams {
 /** Passed to a create/mutate call. Reused verbatim as the `Idempotency-Key` header. */
 export interface RequestOptions {
   idempotencyKey?: string;
+  /** Overrides the client's default request timeout for this call only. */
+  timeoutMs?: number;
 }

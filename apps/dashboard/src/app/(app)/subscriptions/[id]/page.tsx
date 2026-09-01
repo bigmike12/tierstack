@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { cancelSubscription, resumeSubscription, setPricePinned } from "@/actions/billing";
 import { StatusBadge } from "@/components/status-badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DescriptionList, Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
@@ -11,6 +9,7 @@ import { apiFetchOrNull } from "@/lib/api";
 import { describeInterval, formatAmount, formatDate, formatDateTime, relativeDays, titleCase } from "@/lib/format";
 import type { Paged } from "@/lib/list";
 import type { Invoice, Subscription, SubscriptionTransition } from "@/lib/types";
+import { CancelAtPeriodEndForm, CancelNowForm, PinPriceForm, ResumeSubscriptionForm } from "./subscription-actions";
 
 export const metadata: Metadata = { title: "Subscription" };
 
@@ -50,28 +49,11 @@ export default async function SubscriptionPage({ params }: { params: Promise<{ i
           !terminal ? (
             <div className="flex gap-2">
               {subscription.cancelAtPeriodEnd ? (
-                <form action={resumeSubscription}>
-                  <input type="hidden" name="subscriptionId" value={subscription.id} />
-                  <Button type="submit" variant="outline" size="sm">
-                    Revoke cancellation
-                  </Button>
-                </form>
+                <ResumeSubscriptionForm subscriptionId={subscription.id} />
               ) : (
-                <form action={cancelSubscription}>
-                  <input type="hidden" name="subscriptionId" value={subscription.id} />
-                  <input type="hidden" name="atPeriodEnd" value="true" />
-                  <Button type="submit" variant="outline" size="sm">
-                    Cancel at period end
-                  </Button>
-                </form>
+                <CancelAtPeriodEndForm subscriptionId={subscription.id} />
               )}
-              <form action={cancelSubscription}>
-                <input type="hidden" name="subscriptionId" value={subscription.id} />
-                <input type="hidden" name="atPeriodEnd" value="false" />
-                <Button type="submit" variant="destructive" size="sm">
-                  Cancel now
-                </Button>
-              </form>
+              <CancelNowForm subscriptionId={subscription.id} />
             </div>
           ) : null
         }
@@ -126,13 +108,7 @@ export default async function SubscriptionPage({ params }: { params: Promise<{ i
             />
 
             <div className="mt-5 flex items-start gap-3 border-t border-border pt-4">
-              <form action={setPricePinned}>
-                <input type="hidden" name="subscriptionId" value={subscription.id} />
-                <input type="hidden" name="pinned" value={subscription.pricePinned ? "false" : "true"} />
-                <Button type="submit" variant="outline" size="sm">
-                  {subscription.pricePinned ? "Follow price changes" : "Pin to this price"}
-                </Button>
-              </form>
+              <PinPriceForm subscriptionId={subscription.id} pinned={subscription.pricePinned} />
               <p className="text-xs text-muted-foreground">
                 {subscription.pricePinned
                   ? "Held on this price. Releasing it means the next renewal catches up."

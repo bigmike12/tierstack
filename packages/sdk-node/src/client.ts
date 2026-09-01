@@ -12,6 +12,8 @@ export interface TierstackClientOptions {
   baseUrl: string;
   /** Injectable for tests and for runtimes without a global `fetch`. */
   fetch?: typeof fetch;
+  /** Milliseconds before a request is abandoned. Defaults to 30s. */
+  timeoutMs?: number;
 }
 
 interface ApiEnvelope<T> {
@@ -29,15 +31,19 @@ type Query = object;
  * into a request, and an envelope back into either a value or a thrown
  * `TierstackError`. No resource talks to `fetch` directly.
  */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 export class TierstackHttpClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(private readonly options: TierstackClientOptions) {
     if (!options.apiKey) throw new Error("Tierstack: apiKey is required.");
     if (!options.baseUrl) throw new Error("Tierstack: baseUrl is required.");
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (!this.fetchImpl) {
       throw new Error(
         "Tierstack: no global fetch is available in this runtime. Pass one explicitly via the `fetch` option."
@@ -57,17 +63,40 @@ export class TierstackHttpClient {
       }
     }
 
-    const response = await this.fetchImpl(url.toString(), {
-      method,
-      headers: {
-        authorization: `Bearer ${this.options.apiKey}`,
-        "content-type": "application/json",
-        ...(params?.options?.idempotencyKey
-          ? { "idempotency-key": params.options.idempotencyKey }
-          : {}),
-      },
-      ...(params?.body === undefined ? {} : { body: JSON.stringify(params.body) }),
-    });
+    // A hung request otherwise waits on whatever default the runtime happens
+    // to have (often none at all) — a caller integrating this SDK into a
+    // request handler should never have that decided for them implicitly.
+    const controller = new AbortController();
+    const timeoutMs = params?.options?.timeoutMs ?? this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url.toString(), {
+        method,
+        headers: {
+          authorization: `Bearer ${this.options.apiKey}`,
+          "content-type": "application/json",
+          ...(params?.options?.idempotencyKey
+            ? { "idempotency-key": params.options.idempotencyKey }
+            : {}),
+        },
+        ...(params?.body === undefined ? {} : { body: JSON.stringify(params.body) }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new TierstackError(
+          `Tierstack API did not respond within ${timeoutMs}ms.`,
+          "REQUEST_TIMEOUT",
+          0,
+          null
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
 
     const envelope = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
 
