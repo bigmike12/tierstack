@@ -18,8 +18,11 @@ import {
 } from "@tierstack/shared";
 import { applyPaymentToInvoice, assertPayable } from "./invoice";
 import { nextRetryAt, openGracePeriod } from "./grace";
+import { priceInterval } from "./pricing";
 import { instantiateProvider, resolveProviders, type ProviderFactoryDeps } from "./providers";
+import { planPaymentRecovery } from "./recovery";
 import { loadDunningPolicy } from "./settings";
+import { toPriceSnapshot } from "./subscriptions";
 import { applyTransition } from "./transitions";
 import type { SubscriptionStatus } from "./state-machine";
 import { dispatchWebhookEvent } from "./webhooks-outbound";
@@ -279,7 +282,9 @@ export async function applyPaymentResult(
   return prisma.$transaction(async (tx) => {
     const attempt = await tx.paymentAttempt.findFirst({
       where: { id: params.attemptId, organizationId: params.organizationId },
-      include: { invoice: { include: { subscription: true } } },
+      // The price comes along because a recovery from UNPAID opens a new
+      // period, and the length of that period is the price's own interval.
+      include: { invoice: { include: { subscription: { include: { price: true } } } } },
     });
     if (!attempt) throw BillingError.notFound("PAYMENT_ATTEMPT_NOT_FOUND", "Payment attempt");
 
@@ -349,12 +354,8 @@ export async function applyPaymentResult(
       });
     }
 
-    const paidInvoice = await applyPaymentToInvoice(
-      tx,
-      invoice.id,
-      result.amount.amount,
-      result.paidAt ?? new Date()
-    );
+    const paidAt = result.paidAt ?? new Date();
+    const paidInvoice = await applyPaymentToInvoice(tx, invoice.id, result.amount.amount, paidAt);
 
     if (paidInvoice.status === "PAID") {
       await dispatchWebhookEvent(tx, {
@@ -372,13 +373,52 @@ export async function applyPaymentResult(
 
     let subscriptionStatus: SubscriptionStatus | undefined;
     if (invoice.subscription && paidInvoice.status === "PAID") {
-      const current = invoice.subscription.status as SubscriptionStatus;
-      if (["INCOMPLETE", "PAST_DUE", "GRACE_PERIOD", "UNPAID", "TRIALING"].includes(current)) {
-        await applyTransition(tx, invoice.subscription.id, current, "ACTIVE", "payment_succeeded", {
-          gracePeriodStart: null,
-          gracePeriodEnd: null,
-          gracePolicy: null,
-        });
+      const subscription = invoice.subscription;
+      const current = subscription.status as SubscriptionStatus;
+
+      // A subscription that lost its access while UNPAID is not owed the
+      // periods it spent revoked; this payment buys a period starting now.
+      // One that lapsed only as far as PAST_DUE or GRACE_PERIOD kept being
+      // served, so it keeps the period it was being served on.
+      const recovery = planPaymentRecovery({
+        status: current,
+        currentPeriodStart: subscription.currentPeriodStart,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+        billingAnchorDay: subscription.billingAnchorDay,
+        interval: priceInterval(toPriceSnapshot(subscription.price)),
+        recoveredAt: paidAt,
+      });
+
+      if (recovery.recovers) {
+        await applyTransition(
+          tx,
+          subscription.id,
+          current,
+          "ACTIVE",
+          "payment_succeeded",
+          {
+            gracePeriodStart: null,
+            gracePeriodEnd: null,
+            gracePolicy: null,
+            ...(recovery.rebased
+              ? {
+                  currentPeriodStart: recovery.currentPeriodStart,
+                  currentPeriodEnd: recovery.currentPeriodEnd,
+                  billingAnchorDay: recovery.billingAnchorDay,
+                }
+              : {}),
+          },
+          recovery.rebased
+            ? {
+                // Worth naming in the audit trail: the period jumped, and this
+                // says why rather than leaving it to be inferred.
+                periodRebasedOnRecovery: true,
+                lapsedPeriodEnd: subscription.currentPeriodEnd.toISOString(),
+                currentPeriodStart: recovery.currentPeriodStart.toISOString(),
+                currentPeriodEnd: recovery.currentPeriodEnd.toISOString(),
+              }
+            : {}
+        );
         subscriptionStatus = "ACTIVE";
         await dispatchWebhookEvent(tx, {
           organizationId: params.organizationId,

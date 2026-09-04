@@ -205,6 +205,30 @@ in code — along with the access policy during grace
 (`FULL_ACCESS` / `RESTRICTED_ACCESS` / `NO_ACCESS`) and the terminal action
 when it runs out (`MARK_UNPAID` / `CANCEL` / `PAUSE`).
 
+### Recovery
+
+A settled payment brings a lapsed subscription back to `ACTIVE`, and the
+billing period it lands on depends on whether the customer kept their access
+(`planPaymentRecovery`, in `packages/billing/src/recovery.ts`):
+
+| recovered from | period |
+|---|---|
+| `PAST_DUE`, `GRACE_PERIOD` | **kept** — the subscription never stopped being served, so the payment settles the period it is already in |
+| `UNPAID` | **rebased** onto the payment: `currentPeriodStart` is the moment the money arrived and `currentPeriodEnd` one interval on from it, re-anchored the way a converting trial is |
+
+Rebasing is what stops a recovery from replaying the lapse. Entitlements are
+revoked in `UNPAID`, so the periods that passed while the subscription sat there
+were never served — and left on an expired period, the renewals sweep would
+walk them forward one invoice per pass, billing a daily plan that lapsed for a
+month thirty times over for service nobody received. There are no catch-up
+invoices for an `UNPAID` window; the customer pays for the period they are
+getting, starting at the payment.
+
+Renewal reads late for the same reason: `renewSubscription` re-checks
+`isPeriodDue` inside its advisory lock when the caller is the sweep, so a
+subscription recovered (or renewed by anything else) after the batch was
+selected is skipped rather than charged for a period that was just opened.
+
 ## 7. Pricing and invoicing
 
 Four pricing models: `FLAT_RECURRING`, `PER_SEAT`, `USAGE_METERED`, `HYBRID`.

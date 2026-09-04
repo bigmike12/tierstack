@@ -43,7 +43,12 @@ export async function runRenewals(ctx: JobContext, now = new Date(), batchSize =
 
   for (const subscription of due) {
     try {
-      const result = await renewSubscription(ctx.prisma, subscription.id, now);
+      // This batch was selected before the loop started collecting payments on
+      // it. `onlyWhenDue` makes renewSubscription re-check under its lock, so a
+      // subscription that was recovered out of UNPAID (or renewed by anything
+      // else) in the meantime is skipped rather than billed for a period that
+      // has already been opened.
+      const result = await renewSubscription(ctx.prisma, subscription.id, now, { onlyWhenDue: true });
       if (!result.renewed) continue;
       renewed += 1;
 

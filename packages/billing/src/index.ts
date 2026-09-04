@@ -3,6 +3,7 @@ export * from "./pricing";
 export * from "./proration";
 export * from "./invoice";
 export * from "./grace";
+export * from "./recovery";
 export * from "./settings";
 export * from "./invalidation";
 export * from "./transitions";

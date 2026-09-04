@@ -30,6 +30,7 @@
     "demo:data": "node scripts/infra.mjs && tsx scripts/demo-data.ts",
     "dunning:data": "node scripts/infra.mjs && tsx scripts/dunning-data.ts",
     "e2e": "node scripts/infra.mjs && tsx scripts/e2e.ts",
+    "audit:unpaid-recovery": "tsx scripts/audit-unpaid-recovery.ts",
     "dev:usage-worker": "turbo run dev --filter=@tierstack/usage-worker",
     "up": "node scripts/infra.mjs",
     "down": "docker compose down",
