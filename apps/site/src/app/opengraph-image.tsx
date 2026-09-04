@@ -65,18 +65,35 @@ async function loadFace(spec: string): Promise<ArrayBuffer> {
  * card in the renderer's default face, not fail to produce one and not produce
  * a half-set one.
  */
+let fontsPromise:
+  | Promise<
+      | {
+          name: string;
+          data: ArrayBuffer;
+          weight: number;
+          style: "normal";
+        }[]
+      | undefined
+    >
+  | null = null;
+
 async function loadFonts() {
-  try {
-    const files = await Promise.all(FACES.map((face) => loadFace(face.spec)));
-    return FACES.map((face, index) => ({
-      name: face.name,
-      data: files[index],
-      weight: face.weight,
-      style: "normal" as const,
-    }));
-  } catch {
-    return undefined;
+  if (!fontsPromise) {
+    fontsPromise = (async () => {
+      try {
+        const files = await Promise.all(FACES.map((face) => loadFace(face.spec)));
+        return FACES.map((face, index) => ({
+          name: face.name,
+          data: files[index]!,
+          weight: face.weight,
+          style: "normal" as const,
+        }));
+      } catch {
+        return undefined;
+      }
+    })();
   }
+  return fontsPromise;
 }
 
 export default async function OpengraphImage() {
