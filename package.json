@@ -29,7 +29,6 @@
     "db:seed": "node scripts/infra.mjs && tsx prisma/seed.ts",
     "demo:data": "node scripts/infra.mjs && tsx scripts/demo-data.ts",
     "dunning:data": "node scripts/infra.mjs && tsx scripts/dunning-data.ts",
-    "sim:daily": "node scripts/infra.mjs && tsx scripts/daily-sim.ts",
     "e2e": "node scripts/infra.mjs && tsx scripts/e2e.ts",
     "dev:usage-worker": "turbo run dev --filter=@tierstack/usage-worker",
     "up": "node scripts/infra.mjs",
