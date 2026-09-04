@@ -30,7 +30,10 @@ export function Wordmark({
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
       <Mark />
-      <span className="truncate font-semibold tracking-tight">{name}</span>
+      {/* Bricolage Grotesque at 600 — the display face this app already loads
+          for headings, and the same face the marketing site sets the wordmark
+          in, so the name reads identically on both sides of the sign-in. */}
+      <span className="truncate font-display font-semibold tracking-tight">{name}</span>
     </span>
   );
 }

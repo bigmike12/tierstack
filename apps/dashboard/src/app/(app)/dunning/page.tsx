@@ -6,11 +6,12 @@ import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pagination } from "@/components/ui/pagination";
 import { DescriptionList, EmptyState, Mono, PageHeader, Stat } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { formatAmount, formatDate, relativeDays, titleCase } from "@/lib/format";
-import { emptyPage, type Paged } from "@/lib/list";
+import { emptyPage, listQuery, type Paged } from "@/lib/list";
 import type { BillingSettings, EmailMessage, Invoice, Subscription } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Dunning" };
@@ -18,27 +19,49 @@ export const metadata: Metadata = { title: "Dunning" };
 /** Mirrors MAX_EMAIL_ATTEMPTS in packages/notifications/src/service.ts. */
 const MAX_EMAIL_ATTEMPTS = 5;
 
+/**
+ * Three tables on one screen, so each pages on its own param. Ten rows apiece
+ * keeps the whole page a predictable length no matter how far behind the book
+ * gets — this screen used to grow to fifty rows a table on a bad month, which
+ * is exactly when it most needs to be readable.
+ */
+const PER_PAGE = 10;
+
 export default async function DunningPage({
   searchParams,
 }: {
-  searchParams: Promise<{ problem?: string }>;
+  searchParams: Promise<{
+    problem?: string;
+    gracePage?: string;
+    openPage?: string;
+    emailsPage?: string;
+  }>;
 }) {
-  const { problem } = await searchParams;
+  const { problem, gracePage: graceParam, openPage, emailsPage } = await searchParams;
+
   const [settings, inGrace, unpaidSubs, openInvoices, emails] = await Promise.all([
     apiFetchOrNull<BillingSettings>("/v1/billing-settings"),
-    apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?status=GRACE_PERIOD&limit=50"),
+    apiFetchOrNull<Paged<Subscription>>(
+      `/v1/subscriptions${listQuery({ status: "GRACE_PERIOD", page: graceParam, limit: PER_PAGE })}`
+    ),
     apiFetchOrNull<Paged<Subscription>>("/v1/subscriptions?status=UNPAID&limit=1"),
-    apiFetchOrNull<Paged<Invoice>>("/v1/invoices?status=OPEN&limit=50"),
-    apiFetchOrNull<Paged<EmailMessage>>("/v1/emails?limit=15"),
+    apiFetchOrNull<Paged<Invoice>>(
+      `/v1/invoices${listQuery({ status: "OPEN", page: openPage, limit: PER_PAGE })}`
+    ),
+    apiFetchOrNull<Paged<EmailMessage>>(`/v1/emails${listQuery({ page: emailsPage, limit: PER_PAGE })}`),
   ]);
 
   // The counts come from the API's own totals rather than the length of a page,
   // so "3 in grace" stays right when there are more than fit on one page.
-  const gracePage = inGrace ?? emptyPage<Subscription>();
-  const unpaidPage = unpaidSubs ?? emptyPage<Subscription>();
-  const invoicePage = openInvoices ?? emptyPage<Invoice>();
+  const gracePage = inGrace ?? emptyPage<Subscription>(PER_PAGE);
+  const unpaidPage = unpaidSubs ?? emptyPage<Subscription>(PER_PAGE);
+  const invoicePage = openInvoices ?? emptyPage<Invoice>(PER_PAGE);
+  const emailPage = emails ?? emptyPage<EmailMessage>(PER_PAGE);
   const grace = gracePage.items;
   const outstanding = invoicePage.items;
+
+  // Carried across every paging link so moving one table never resets another.
+  const carry = { problem, gracePage: graceParam, openPage, emailsPage };
 
   return (
     <>
@@ -157,15 +180,7 @@ export default async function DunningPage({
               </TBody>
             </Table>
           )}
-          {gracePage.total > grace.length ? (
-            <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
-              Showing the {grace.length} most recent of {gracePage.total.toLocaleString()} —{" "}
-              <Link href="/subscriptions?status=GRACE_PERIOD" className="underline underline-offset-4">
-                see all
-              </Link>
-              .
-            </p>
-          ) : null}
+          <Pagination meta={gracePage} basePath="/dunning" param="gracePage" params={carry} />
         </CardContent>
       </Card>
 
@@ -234,15 +249,7 @@ export default async function DunningPage({
               </TBody>
             </Table>
           )}
-          {invoicePage.total > outstanding.length ? (
-            <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
-              Showing the {outstanding.length} most recent of {invoicePage.total.toLocaleString()} —{" "}
-              <Link href="/invoices?status=OPEN" className="underline underline-offset-4">
-                see all
-              </Link>
-              .
-            </p>
-          ) : null}
+          <Pagination meta={invoicePage} basePath="/dunning" param="openPage" params={carry} />
         </CardContent>
       </Card>
 
@@ -251,7 +258,7 @@ export default async function DunningPage({
           <CardTitle>What customers were told</CardTitle>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          {(emails?.items.length ?? 0) === 0 ? (
+          {emailPage.items.length === 0 ? (
             <div className="px-5 pb-5">
               <EmptyState
                 title="Nothing sent yet"
@@ -269,7 +276,7 @@ export default async function DunningPage({
                 </TR>
               </THead>
               <TBody>
-                {(emails?.items ?? []).map((message) => (
+                {emailPage.items.map((message) => (
                   <TR key={message.id}>
                     <TD className="text-muted-foreground">{message.toEmail}</TD>
                     <TD>{message.subject}</TD>
@@ -297,6 +304,7 @@ export default async function DunningPage({
               </TBody>
             </Table>
           )}
+          <Pagination meta={emailPage} basePath="/dunning" param="emailsPage" params={carry} />
         </CardContent>
       </Card>
     </>

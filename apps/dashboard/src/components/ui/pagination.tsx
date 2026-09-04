@@ -18,27 +18,41 @@ export interface Paged<T> extends PageMeta {
  * Plain links, not buttons: paging is a navigation, it works without
  * JavaScript, and each page is addressable. Every other search param is carried
  * across so paging never silently drops an active search or filter.
+ *
+ * `param` is the search param this control drives, and it is what lets a page
+ * carry several independently paged tables — a detail screen with its own
+ * invoices, or the dunning screen with three. Whole-page tables keep the plain
+ * `page`; a table inside a card takes a name ending in `Page`, which is the
+ * convention `ScrollReset` reads to decide whether a navigation should jump the
+ * reader back to the top. Paging a card halfway down a screen should leave them
+ * looking at that card.
  */
 export function Pagination({
   meta,
   basePath,
   params = {},
+  param = "page",
   className,
 }: {
   meta: PageMeta;
   basePath: string;
   /** The other search params currently in effect. */
   params?: Record<string, string | undefined>;
+  param?: string;
   className?: string;
 }) {
   if (meta.total === 0) return null;
 
+  // A table inside a card, rather than the whole screen. Next must not move
+  // the window, and the reader must not be thrown back to the top.
+  const inPlace = param !== "page";
+
   const href = (page: number) => {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== "" && key !== "page") search.set(key, value);
+      if (value !== undefined && value !== "" && key !== param) search.set(key, value);
     }
-    if (page > 1) search.set("page", String(page));
+    if (page > 1) search.set(param, String(page));
     const query = search.toString();
     return query ? `${basePath}?${query}` : basePath;
   };
@@ -59,7 +73,7 @@ export function Pagination({
 
       {meta.totalPages > 1 ? (
         <nav aria-label="Pagination" className="flex items-center gap-1">
-          <Step href={href(meta.page - 1)} disabled={meta.page <= 1} label="Previous">
+          <Step href={href(meta.page - 1)} disabled={meta.page <= 1} label="Previous" scroll={!inPlace}>
             <ChevronLeft className="size-4" aria-hidden />
           </Step>
 
@@ -72,6 +86,7 @@ export function Pagination({
               <Link
                 key={entry}
                 href={href(entry)}
+                scroll={!inPlace}
                 aria-current={entry === meta.page ? "page" : undefined}
                 className={cn(
                   "tabular inline-flex h-8 min-w-8 items-center justify-center rounded-md px-2 text-xs",
@@ -85,7 +100,7 @@ export function Pagination({
             )
           )}
 
-          <Step href={href(meta.page + 1)} disabled={meta.page >= meta.totalPages} label="Next">
+          <Step href={href(meta.page + 1)} disabled={meta.page >= meta.totalPages} label="Next" scroll={!inPlace}>
             <ChevronRight className="size-4" aria-hidden />
           </Step>
         </nav>
@@ -98,11 +113,13 @@ function Step({
   href,
   disabled,
   label,
+  scroll,
   children,
 }: {
   href: string;
   disabled: boolean;
   label: string;
+  scroll: boolean;
   children: React.ReactNode;
 }) {
   const classes = "inline-flex h-8 w-8 items-center justify-center rounded-md";
@@ -115,7 +132,12 @@ function Step({
     );
   }
   return (
-    <Link href={href} aria-label={label} className={cn(classes, "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+    <Link
+      href={href}
+      scroll={scroll}
+      aria-label={label}
+      className={cn(classes, "text-muted-foreground hover:bg-muted hover:text-foreground")}
+    >
       {children}
     </Link>
   );

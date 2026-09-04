@@ -20,6 +20,31 @@ function Mark({ className = "" }: { className?: string }) {
 }
 
 /**
+ * The name, set in the one face that carries it: Bricolage Grotesque at 600.
+ *
+ * Everywhere the brand name appears as a mark rather than as a word in a
+ * sentence goes through here, so there is exactly one place that decides how
+ * it is set. `font-wordmark` resolves to the webfont loaded in the root
+ * layout; `font-semibold` is the 600 cut, which is the only weight fetched.
+ */
+export function Wordmark({
+  name = BRAND.name,
+  className = "",
+  markClassName = "",
+}: {
+  name?: string;
+  className?: string;
+  markClassName?: string;
+}) {
+  return (
+    <span className={`inline-flex items-center gap-2.5 ${className}`}>
+      <Mark className={markClassName} />
+      <span className="font-wordmark font-semibold tracking-tight">{name}</span>
+    </span>
+  );
+}
+
+/**
  * Five links, all of which go somewhere that exists.
  *
  * Flat rather than a Product dropdown: a dropdown earns its keep when there
@@ -46,9 +71,8 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-30 border-b border-line/70 bg-paper/85 backdrop-blur">
       <nav className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
-        <Link href="/" className="inline-flex items-center gap-2.5 font-semibold tracking-tight">
-          <Mark />
-          {BRAND.name}
+        <Link href="/" className="inline-flex items-center">
+          <Wordmark />
         </Link>
 
         <div className="hidden items-center gap-7 md:flex">
@@ -121,33 +145,135 @@ export function Nav() {
   );
 }
 
+/**
+ * The footer columns. Every entry points at a page that exists — the same rule
+ * the nav follows, for the same reason. "Account" is two outbound links into
+ * the application rather than a third column of marketing pages that aren't
+ * written yet.
+ */
+const FOOTER_COLUMNS: { heading: string; links: { href: string; label: string; external?: boolean }[] }[] = [
+  {
+    heading: "Product",
+    links: [
+      { href: "/how-it-works", label: "How it works" },
+      { href: "/features", label: "Features" },
+      { href: "/status", label: "What's built" },
+    ],
+  },
+  {
+    heading: "Developers",
+    links: [
+      { href: "/developers", label: "Overview" },
+      { href: "/docs", label: "Documentation" },
+      { href: "/llms.txt", label: "llms.txt", external: true },
+    ],
+  },
+];
+
+/**
+ * The closing moment of every page.
+ *
+ * Dark, so the page ends on a deliberate edge rather than trailing off in the
+ * same off-white it started in, and set on the same ink the ink bands use so
+ * it belongs to the palette rather than announcing a new one. The oversized
+ * wordmark underneath is decoration and nothing else: it is aria-hidden, it is
+ * not a link, and every piece of information in the footer is legible without
+ * it. It is masked into the bottom edge rather than sitting on top of the ink
+ * at full strength, which is what keeps it from competing with the links.
+ */
 export function Footer() {
+  const year = new Date().getFullYear();
+
   return (
-    <footer className="border-t border-line">
-      <div className="mx-auto w-full max-w-6xl px-6 py-12">
-        <div className="flex flex-col gap-8 sm:flex-row sm:justify-between">
+    <footer className="relative isolate overflow-hidden bg-ink text-paper">
+      {/* Ambient layers, both decorative: the technical grid the dashboard art
+          uses, and one soft accent bloom to stop the ink reading as flat. */}
+      <div aria-hidden className="grid-field absolute inset-0 -z-10 opacity-[0.35]" />
+      <div
+        aria-hidden
+        className="absolute -top-40 left-1/2 -z-10 h-80 w-[42rem] max-w-[120vw] -translate-x-1/2 rounded-full bg-accent/20 blur-[110px]"
+      />
+
+      <div className="mx-auto w-full max-w-6xl px-6">
+        <div className="grid gap-12 border-b border-paper/10 py-16 lg:grid-cols-[1.5fr_1fr_1fr] lg:gap-14">
           <div>
-            <span className="inline-flex items-center gap-2.5 text-sm font-semibold tracking-tight">
-              <Mark />
-              {BRAND.legalName}
-            </span>
-            <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted">{BRAND.tagline}.</p>
+            <Wordmark name={BRAND.legalName} className="text-lg" markClassName="size-5 text-accent-hover" />
+            <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-paper/60">{BRAND.tagline}.</p>
+
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <a
+                href={`${BRAND.appUrl}/register`}
+                className="rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-paper transition-colors hover:bg-accent-hover"
+              >
+                Start building
+              </a>
+              <a
+                href={`${BRAND.appUrl}/login`}
+                className="rounded-md border border-paper/20 px-5 py-2.5 text-sm font-medium transition-colors hover:border-accent-hover hover:text-accent-hover"
+              >
+                Sign in
+              </a>
+            </div>
           </div>
 
-          <nav className="flex flex-col gap-2.5 text-sm sm:text-right">
-            {LINKS.map((link) => (
-              <Link key={link.href} href={link.href} className="text-muted transition-colors hover:text-accent">
-                {link.label}
-              </Link>
+          {/* Their own grid cells at lg, so the columns sit on the same rhythm
+              as the brand block instead of bunching against the right edge. */}
+          <div className="grid gap-10 sm:grid-cols-2 lg:contents">
+            {FOOTER_COLUMNS.map((column) => (
+              <nav key={column.heading} aria-label={column.heading}>
+                <h2 className="font-mono text-[11px] uppercase tracking-[0.2em] text-paper/40">
+                  {column.heading}
+                </h2>
+                <ul className="mt-5 space-y-3 text-[15px]">
+                  {column.links.map((link) => (
+                    <li key={link.href}>
+                      {link.external ? (
+                        <a href={link.href} className="text-paper/70 transition-colors hover:text-accent-hover">
+                          {link.label}
+                        </a>
+                      ) : (
+                        <Link href={link.href} className="text-paper/70 transition-colors hover:text-accent-hover">
+                          {link.label}
+                        </Link>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </nav>
             ))}
-            <a
-              href={`${BRAND.appUrl}/login`}
-              className="text-muted transition-colors hover:text-accent"
-            >
-              Sign in
-            </a>
-          </nav>
+          </div>
         </div>
+
+        {/* One line of honest metadata rather than a row of social icons for
+            accounts that do not exist. */}
+        <div className="flex flex-col gap-4 py-6 font-mono text-[11px] uppercase tracking-[0.18em] text-paper/40 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            © {year} {BRAND.legalName}
+          </p>
+          <p className="inline-flex items-center gap-2.5">
+            <span aria-hidden className="size-1.5 rounded-full bg-settled" />
+            Paystack verified · Test mode open
+          </p>
+        </div>
+      </div>
+
+      {/* The bleed: the baseline is cut by the bottom of the page rather than
+          sitting above it, so the page ends mid-word and the name reads as
+          something the footer is standing on.
+
+          Flat fill, no gradient. Eight of the nine letters are lowercase, so
+          the crossbar of the T and the dot of the i are the only marks in the
+          top of the box — any vertical fade at all lights those two
+          differently from the rest of the word. */}
+      <div aria-hidden className="relative overflow-hidden px-6">
+        {/* Set to span the measure without touching the edges. The name is
+            about 4.07em wide at this weight and tracking, so 20.5vw keeps it
+            inside the 24px gutter on every width from a 320px phone up, and
+            the 17.5rem ceiling stops it growing past the container on a wide
+            display. overflow-hidden above is the backstop, not the plan. */}
+        <p className="-mb-[0.09em] mx-auto max-w-6xl select-none text-center font-wordmark text-[clamp(3.4rem,20.5vw,17.5rem)] font-semibold leading-[0.82] tracking-tightest text-paper/[0.07]">
+          {BRAND.name}
+        </p>
       </div>
     </footer>
   );

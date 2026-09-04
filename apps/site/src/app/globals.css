@@ -20,6 +20,122 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Surfaces ------------------------------------------------------------
+   Two decorative layers used on the ink grounds — the scroll stage and the
+   footer. Both are painted by the compositor from a repeating gradient rather
+   than an asset, so they cost one paint and no requests.                    */
+
+.grid-field {
+  background-image:
+    linear-gradient(to right, rgba(250, 250, 250, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(250, 250, 250, 0.055) 1px, transparent 1px);
+  background-size: 76px 76px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, #000 35%, transparent 100%);
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, #000 35%, transparent 100%);
+  pointer-events: none;
+}
+
+/* --- The scroll stage ----------------------------------------------------
+   The stacked version below is the real one: four chapters, one after
+   another, no JavaScript involved and nothing hidden. Everything that pins
+   and cross-fades lives inside the media query underneath it, so a browser
+   that does not qualify — narrow, short, or asked for reduced motion — simply
+   never opts in and renders the plain sequence.                             */
+
+.stage-hud {
+  display: none;
+}
+
+.stage-panel + .stage-panel {
+  margin-top: 4.5rem;
+  border-top: 1px solid rgba(250, 250, 250, 0.1);
+  padding-top: 4.5rem;
+}
+
+@media (min-width: 1024px) and (min-height: 640px) and (prefers-reduced-motion: no-preference) {
+  .stage {
+    /* One viewport to arrive in, then a screenful of travel per chapter. The
+       number of chapters comes in as a custom property so the height and the
+       progress maths can never disagree about how many there are. */
+    --p: 0;
+    --progress: 0;
+    position: relative;
+    height: calc(100vh + var(--chapters) * 78vh);
+    height: calc(100svh + var(--chapters) * 78svh);
+  }
+
+  .stage-pin {
+    position: sticky;
+    top: 0;
+    display: flex;
+    height: 100vh;
+    height: 100svh;
+    align-items: center;
+  }
+
+  .stage-hud {
+    display: block;
+  }
+
+  /* Every chapter occupies the same grid cell, so the deck is as tall as the
+     tallest one and nothing reflows as they cross over. */
+  .stage-deck {
+    display: grid;
+  }
+
+  .stage-panel,
+  .stage-shot {
+    /* Distance from this chapter to the current position, in chapters. */
+    --d: max(calc(var(--p) - var(--i)), calc(var(--i) - var(--p)));
+  }
+
+  /* Written at the same specificity as the stacked rule it undoes, so the
+     spacing between chapters actually goes away when they are overlaid. */
+  .stage-panel + .stage-panel {
+    margin-top: 0;
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .stage-panel {
+    grid-area: 1 / 1;
+    /* Every chapter is stretched to the height of the tallest one, since they
+       share a cell. Centring the content inside that height keeps the short
+       chapters sitting where the long ones do, rather than riding up to the
+       top of the frame and leaving the bottom of it empty. */
+    display: grid;
+    align-content: center;
+    /* Full strength within a third of a chapter either side, gone by half.
+       The gone-by-half is the important number: two chapters overlaid at any
+       readable opacity is two paragraphs printed on top of each other, which
+       looks like a bug rather than a transition. This way the outgoing one has
+       finished leaving before the incoming one starts arriving, and the
+       handover is a brief dip rather than a blend. */
+    opacity: clamp(0, calc((0.52 - var(--d)) / 0.22), 1);
+    transform: translate3d(0, calc((var(--p) - var(--i)) * -2.5rem), 0);
+    will-change: opacity, transform;
+  }
+
+  /* The screenshot lags the text very slightly and settles out of a shrink,
+     which is what stops the crossfade reading as a slideshow. */
+  .stage-shot {
+    max-width: min(100%, 33rem);
+    margin-inline: auto;
+    transform: translate3d(0, calc((var(--p) - var(--i)) * -1.15rem), 0)
+      scale(calc(1 - min(var(--d), 1) * 0.04));
+    will-change: transform;
+  }
+
+  .stage-rail-fill {
+    width: calc(var(--progress) * 100%);
+  }
+
+  .stage-tick {
+    opacity: calc(0.22 + (1 - min(var(--d), 1)) * 0.78);
+    transform: translate(-50%, -50%) scale(calc(0.72 + (1 - min(var(--d), 1)) * 0.28));
+  }
+}
+
 /* --- Motion -------------------------------------------------------------
    Everything below is decoration. It runs once on entry, it is short, and it
    never moves anything a reader is trying to read. Anyone who has asked their

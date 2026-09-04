@@ -3,26 +3,45 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pagination } from "@/components/ui/pagination";
 import { DescriptionList, Mono, PageHeader } from "@/components/ui/shell";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { apiFetchOrNull } from "@/lib/api";
 import { describeInterval, formatAmount, formatDate, formatDateTime, relativeDays, titleCase } from "@/lib/format";
-import type { Paged } from "@/lib/list";
+import { emptyPage, listQuery, type Paged } from "@/lib/list";
 import type { Invoice, Subscription, SubscriptionTransition } from "@/lib/types";
 import { CancelAtPeriodEndForm, CancelNowForm, PinPriceForm, ResumeSubscriptionForm } from "./subscription-actions";
 
 export const metadata: Metadata = { title: "Subscription" };
 
-export default async function SubscriptionPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const [subscription, transitions, invoicePage] = await Promise.all([
+/** Ten rows keeps the card about a screen tall whatever the history looks like. */
+const INVOICES_PER_PAGE = 10;
+
+export default async function SubscriptionPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ invoicesPage?: string }>;
+}) {
+  const [{ id }, { invoicesPage }] = await Promise.all([params, searchParams]);
+
+  const [subscription, transitions, invoiceResult] = await Promise.all([
     apiFetchOrNull<Subscription>(`/v1/subscriptions/${id}`),
     apiFetchOrNull<SubscriptionTransition[]>(`/v1/subscriptions/${id}/transitions`),
-    apiFetchOrNull<Paged<Invoice>>(`/v1/invoices?subscriptionId=${id}&limit=50`),
+    apiFetchOrNull<Paged<Invoice>>(
+      `/v1/invoices${listQuery({
+        subscriptionId: id,
+        page: invoicesPage,
+        limit: INVOICES_PER_PAGE,
+      })}`
+    ),
   ]);
   if (!subscription) notFound();
 
-  const invoices = invoicePage?.items ?? null;
+  const invoicePage = invoiceResult ?? emptyPage<Invoice>(INVOICES_PER_PAGE);
+  const invoices = invoicePage.items;
+  const events = transitions ?? [];
 
   const price = subscription.price;
   const recurring =
@@ -158,7 +177,7 @@ export default async function SubscriptionPage({ params }: { params: Promise<{ i
           <CardTitle>Invoices</CardTitle>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          {invoices && invoices.length > 0 ? (
+          {invoices.length > 0 ? (
             <Table>
               <THead>
                 <TR>
@@ -192,34 +211,60 @@ export default async function SubscriptionPage({ params }: { params: Promise<{ i
           ) : (
             <p className="px-5 pb-5 text-sm text-muted-foreground">No invoices yet.</p>
           )}
+          <Pagination
+            meta={invoicePage}
+            basePath={`/subscriptions/${id}`}
+            param="invoicesPage"
+          />
         </CardContent>
       </Card>
 
       <Card className="mt-4">
-        <CardHeader>
+        <CardHeader className="flex-row items-center justify-between">
           <CardTitle>Activity</CardTitle>
+          {events.length > 0 ? (
+            <span className="tabular text-xs text-muted-foreground">
+              {events.length} {events.length === 1 ? "event" : "events"}
+            </span>
+          ) : null}
         </CardHeader>
         <CardContent>
-          <ol className="space-y-3">
-            {(transitions ?? []).map((event) => (
-              <li key={event.id} className="flex gap-3 text-sm">
-                <span aria-hidden className="mt-1.5 size-1.5 shrink-0 rounded-full bg-muted-foreground" />
-                <div className="min-w-0">
-                  <p>
-                    {event.fromStatus && event.fromStatus !== event.toStatus ? (
-                      <>
-                        <span className="text-muted-foreground">{titleCase(event.fromStatus)}</span>
-                        <span className="px-1.5 text-muted-foreground">→</span>
-                      </>
-                    ) : null}
-                    <span className="font-medium">{titleCase(event.toStatus)}</span>
-                    <span className="pl-2 text-muted-foreground">{event.reason.replace(/_/g, " ")}</span>
-                  </p>
-                  <p className="text-xs text-muted-foreground">{formatDateTime(event.createdAt)}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
+          {events.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing has happened yet.</p>
+          ) : (
+            /* Scrolled rather than paged. This is one subscription's own
+               history read newest-first, and paging a log breaks the thing a
+               log is for — following a sequence without losing your place. It
+               is focusable so the keyboard can reach it, which a scroll
+               container that only responds to a wheel cannot be. */
+            <div
+              tabIndex={0}
+              role="group"
+              aria-label="Subscription activity log"
+              className="max-h-80 overflow-y-auto overscroll-contain rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ol className="space-y-3 pr-1">
+                {events.map((event) => (
+                  <li key={event.id} className="flex gap-3 text-sm">
+                    <span aria-hidden className="mt-1.5 size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+                    <div className="min-w-0">
+                      <p>
+                        {event.fromStatus && event.fromStatus !== event.toStatus ? (
+                          <>
+                            <span className="text-muted-foreground">{titleCase(event.fromStatus)}</span>
+                            <span className="px-1.5 text-muted-foreground">→</span>
+                          </>
+                        ) : null}
+                        <span className="font-medium">{titleCase(event.toStatus)}</span>
+                        <span className="pl-2 text-muted-foreground">{event.reason.replace(/_/g, " ")}</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">{formatDateTime(event.createdAt)}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
         </CardContent>
       </Card>
     </>

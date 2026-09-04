@@ -8,6 +8,7 @@ import {
 import type { PrismaClient } from "@tierstack/database";
 import {
   dunningExhausted,
+  MAX_EMAIL_ATTEMPTS,
   paymentFailed,
   paymentRecovered,
   priceChange,
@@ -130,6 +131,34 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
     }
   }
 
+  /**
+   * Whether this message has already reached a state `sendOnce` will not send
+   * from, so there is no point building it again.
+   *
+   * `sendOnce` is idempotent, which is what stops a customer being emailed
+   * twice — but it can only make that decision after it has been handed a
+   * finished message, and finishing one can be expensive. The exhausted
+   * dunning email needs a pay link, and minting one initializes a real
+   * transaction at the provider. Without this check that happens on every
+   * pass, for the life of the invoice: a checkout every five minutes for a
+   * customer who was emailed once, days ago. Where the provider rejects the
+   * call, each of those also lands as a FAILED payment attempt, and
+   * `dunningAttempts` is a live count of those — so the "3 of 4 retries" the
+   * dashboard shows climbs into the hundreds without anybody retrying
+   * anything.
+   */
+  async function alreadySettled(organizationId: string, dedupeKey: string): Promise<boolean> {
+    const existing = await ctx.prisma.emailMessage.findUnique({
+      where: { organizationId_dedupeKey: { organizationId, dedupeKey } },
+      select: { status: true, attempts: true },
+    });
+    if (!existing) return false;
+    if (existing.status === "SENT" || existing.status === "SUPPRESSED") return true;
+    // A failure with attempts left is worth rebuilding for; one past the limit
+    // is not going to be sent however many times it is rendered.
+    return existing.status === "FAILED" && existing.attempts >= MAX_EMAIL_ATTEMPTS;
+  }
+
   // -- a payment that failed -------------------------------------------------
   const failing = await ctx.prisma.invoice.findMany({
     where: { status: "OPEN", dunningAttempts: { gte: 1 } },
@@ -141,6 +170,11 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
     const settings = await settingsFor(invoice.organizationId);
     const currency = assertCurrency(invoice.currency);
     const exhausted = invoice.nextRetryAt === null;
+
+    const dedupeKey = exhausted
+      ? `dunning_exhausted:${invoice.id}`
+      : `payment_failed:${invoice.id}:${invoice.dunningAttempts}`;
+    if (await alreadySettled(invoice.organizationId, dedupeKey)) continue;
 
     const method = invoice.subscription?.paymentMethodId
       ? await ctx.prisma.paymentMethod.findUnique({
@@ -179,9 +213,7 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
 
     await deliver({
       organizationId: invoice.organizationId,
-      dedupeKey: exhausted
-        ? `dunning_exhausted:${invoice.id}`
-        : `payment_failed:${invoice.id}:${invoice.dunningAttempts}`,
+      dedupeKey,
       type: exhausted ? "dunning_exhausted" : "payment_failed",
       toEmail: invoice.customer.email,
       email: rendered,
