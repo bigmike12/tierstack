@@ -395,7 +395,7 @@ async function main(): Promise<void> {
           // cannot be initialized for one. `example.com` is the other reserved
           // name, has a TLD Paystack accepts, and is equally undeliverable.
           // Pass --email=you@yours.com to get the receipt somewhere real.
-          email: EMAIL ?? (RAIL === "paystack" ? `dj.buckwild12@gmail.com` : `daily.sim.${run}@example.test`),
+          email: EMAIL ?? `daily.sim.${run}@example.com`,
           name: `Daily Sim ${run.toUpperCase()}`,
           country: "NG",
         },
