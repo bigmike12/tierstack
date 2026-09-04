@@ -2,8 +2,9 @@ import Link from "next/link";
 import { BRAND } from "@/brand";
 import { StackArt } from "@/components/art/stack";
 import { Reveal } from "@/components/reveal";
+import { ScrollStage, type StageChapter } from "@/components/scroll-stage";
 import { Shot } from "@/components/shot";
-import { Band, PrimaryLink, SecondaryLink, Statement } from "@/components/ui";
+import { Band, PrimaryLink, SecondaryLink } from "@/components/ui";
 import { BILLING_WORK } from "@/content";
 
 /**
@@ -26,6 +27,107 @@ import { BILLING_WORK } from "@/content";
  */
 const SAMPLE = "Real dashboard, test mode, sample data";
 
+/**
+ * The four screens the pinned section runs through, in the order a
+ * subscription actually meets them: it exists, it fails, it is measured, and
+ * the customer fixes it themselves.
+ *
+ * Copy is unchanged from the four bands these replaced. It is held here rather
+ * than inside the component so the sequence reads as content on this page,
+ * which is what it is — the component only decides how it moves.
+ */
+const LIFECYCLE: StageChapter[] = [
+  {
+    label: "Subscriptions",
+    title: "Every state, not just paid and failed.",
+    body: (
+      <p>
+        Trialing, active, past due, in a grace period, recovered, gone. Those
+        are six different things, and a customer in the fourth is not the same
+        as a customer in the sixth. {BRAND.name} owns those transitions, records
+        every one with its reason, and gives your application one straight
+        answer when it asks what somebody may do.
+      </p>
+    ),
+    shot: {
+      src: "/product/subscriptions.webp",
+      alt: "The subscriptions list: customer name and id, plan, amount, status and the date each period ends, filtered by status.",
+      width: 1992,
+      height: 1432,
+      caption: SAMPLE,
+    },
+  },
+  {
+    label: "Failed payments",
+    title: "A declined card is not a lost customer.",
+    body: (
+      <>
+        <p>
+          Cards expire, banks block first online charges, spending limits reset
+          tomorrow. You decide how long somebody keeps access and how often to
+          try again; every attempt emails them a link to pay with a different
+          card.
+        </p>
+        <p className="font-medium text-paper">
+          Recover the payment before you lose the customer.
+        </p>
+      </>
+    ),
+    shot: {
+      src: "/product/recovery.webp",
+      alt: "The recovery screen: how many customers are in a grace period, the configured grace period and retry schedule, and the customers currently being retried with the date each grace period ends.",
+      width: 1992,
+      height: 1396,
+      caption: SAMPLE,
+    },
+  },
+  {
+    label: "Usage billing",
+    title: "Charge for what customers actually use.",
+    body: (
+      <p>
+        An allowance, then a rate past it. Consumption is counted from the
+        events your application already sends and totalled when the invoice is
+        built — so no running tally anywhere can drift away from what the
+        customer is billed, and there is no argument at the end of the month
+        about whose number is right.
+      </p>
+    ),
+    shot: {
+      src: "/product/usage.webp",
+      alt: "A customer who has used 161,600 tokens of a 100,000 allowance, with the overage worked out in blocks and priced.",
+      width: 1072,
+      height: 596,
+      caption: SAMPLE,
+    },
+  },
+  {
+    label: "Customer portal",
+    title: "Don’t build another billing page for your customers.",
+    body: (
+      <>
+        <p>
+          Your customers can pay what they owe, swap a card, read past invoices
+          and cancel — on a page you did not build and do not support. Every
+          billing email carries a link straight into it. No password, no account
+          to recover, no ticket.
+        </p>
+        <p className="text-paper">
+          Your team builds the product. {BRAND.name} handles the billing
+          experience.
+        </p>
+      </>
+    ),
+    shot: {
+      src: "/product/portal.webp",
+      alt: "The customer billing portal: an outstanding invoice with a Pay now button, the subscription and when access ends, the saved card, and the invoice history.",
+      width: 1310,
+      height: 1010,
+      caption: "Real customer portal, test mode",
+    },
+  },
+];
+
 export default function Home() {
   return (
     <>
@@ -36,18 +138,21 @@ export default function Home() {
             Billing infrastructure for African software
           </p>
           <h1 className="mt-5 max-w-4xl text-balance text-[2.6rem] font-semibold leading-[1.03] tracking-tightest sm:text-[3.6rem]">
-            Your payment provider moves the money. {BRAND.name} runs the billing.
+            Your payment provider moves the money. {BRAND.name} runs the
+            billing.
           </h1>
           <p className="mt-6 max-w-readable text-lg leading-relaxed text-muted">
-            Paystack can charge a card. It cannot decide who to charge, how much, or when — and it
-            does nothing at all when the card fails. {BRAND.name} does all of that, and keeps the
-            record of who owes you what.
+            Payment providers handle the transaction. {BRAND.name} handles the
+            billing logic — subscriptions, invoices, renewals, retries,
+            failures, and the record of who owes you what.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             <PrimaryLink />
             <SecondaryLink href="/how-it-works">See how it works</SecondaryLink>
           </div>
-          <p className="mt-4 text-sm text-muted">Keep your payment provider. Add a billing layer.</p>
+          <p className="mt-4 text-sm text-muted">
+            Keep your payment provider. Add a billing layer.
+          </p>
         </Reveal>
 
         <Reveal delay={160} className="mt-14">
@@ -70,16 +175,21 @@ export default function Home() {
               A payment gateway is not a billing system.
             </h2>
             <p className="mt-6 max-w-readable text-lg leading-relaxed text-muted">
-              A gateway takes one payment, once. Everything that decides whether there should be a
-              payment at all — who is on which plan, what they owe this month, whether they are still
-              allowed in, what happens when the card fails — has to live somewhere. Usually that
+              A gateway takes one payment, once. Everything that decides whether
+              there should be a payment at all — who is on which plan, what they
+              owe this month, whether they are still allowed in, what happens
+              when the card fails — has to live somewhere. Usually that
               somewhere is code your team writes and then maintains forever.
             </p>
             <p className="mt-4 max-w-readable text-lg leading-relaxed text-ink">
-              {BRAND.name} is that layer, so it is not a folder in your codebase.
+              {BRAND.name} is that layer, so it is not a folder in your
+              codebase.
             </p>
             <p className="mt-7 text-[15px]">
-              <Link href="/how-it-works" className="border-b border-line text-ink hover:border-accent">
+              <Link
+                href="/how-it-works"
+                className="border-b border-line text-ink hover:border-accent"
+              >
                 The whole thing explained without jargon
               </Link>
             </p>
@@ -116,10 +226,17 @@ export default function Home() {
           ].map((item, index) => (
             <Reveal key={item.title} delay={index * 80}>
               <div className="flex h-full flex-col border-t border-line pt-5">
-                <h3 className="text-xl font-semibold tracking-tight">{item.title}</h3>
-                <p className="mt-3 flex-1 leading-relaxed text-muted">{item.body}</p>
+                <h3 className="text-xl font-semibold tracking-tight">
+                  {item.title}
+                </h3>
+                <p className="mt-3 flex-1 leading-relaxed text-muted">
+                  {item.body}
+                </p>
                 <p className="mt-5 text-[15px]">
-                  <Link href={item.href} className="border-b border-line text-ink hover:border-accent">
+                  <Link
+                    href={item.href}
+                    className="border-b border-line text-ink hover:border-accent"
+                  >
                     {item.cta}
                   </Link>
                 </p>
@@ -129,142 +246,18 @@ export default function Home() {
         </div>
       </Band>
 
-      {/* -- Subscriptions -------------------------------------------------- */}
-      <Band tone="raised">
-        <div className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-end">
-          <Reveal>
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
-              Subscriptions
-            </p>
-            <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Every state, not just paid and failed.
-            </h2>
-          </Reveal>
-          <Reveal delay={80}>
-            <p className="max-w-readable text-lg leading-relaxed text-muted">
-              Trialing, active, past due, in a grace period, recovered, gone. Those are six different
-              things, and a customer in the fourth is not the same as a customer in the sixth.
-              {" "}{BRAND.name} owns those transitions, records every one with its reason, and gives
-              your application one straight answer when it asks what somebody may do.
-            </p>
-          </Reveal>
-        </div>
-
-        <Reveal delay={160} className="mt-12">
-          <Shot
-            src="/product/subscriptions.webp"
-            alt="The subscriptions list: customer name and id, plan, amount, status and the date each period ends, filtered by status."
-            width={1992}
-            height={1432}
-            caption={SAMPLE}
-          />
-        </Reveal>
-      </Band>
-
-      {/* -- Recovery -------------------------------------------------------- */}
-      <Band tone="ink">
-        <div className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-end">
-          <Reveal>
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
-              Failed payments
-            </p>
-            <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              A declined card is not a lost customer.
-            </h2>
-            <div className="mt-6 max-w-readable">
-              <Statement>Recover the payment before you lose the customer.</Statement>
-            </div>
-          </Reveal>
-          <Reveal delay={80}>
-            <div className="max-w-readable space-y-4 text-lg leading-relaxed text-paper/70">
-              <p>
-                Cards expire, banks block first online charges, spending limits reset tomorrow. You
-                decide how long somebody keeps access and how often to try again; every attempt
-                emails them a link to pay with a different card.
-              </p>
-              <p className="text-paper">
-                And when the card is one that waiting will never fix, it stops and asks for a new one
-                rather than emailing four more times about a card that is dead.
-              </p>
-            </div>
-          </Reveal>
-        </div>
-
-        <Reveal delay={160} className="mt-12">
-          <Shot
-            src="/product/recovery.webp"
-            alt="The recovery screen: how many customers are in a grace period, the configured grace period and retry schedule, and the customers currently being retried with the date each grace period ends."
-            width={1992}
-            height={1396}
-            caption={SAMPLE}
-          />
-        </Reveal>
-      </Band>
-
-      {/* -- Usage ------------------------------------------------------------ */}
-      <Band>
-        <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
-          <Reveal>
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
-              Usage billing
-            </p>
-            <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Charge for what customers actually use.
-            </h2>
-            <p className="mt-6 max-w-readable text-lg leading-relaxed text-muted">
-              An allowance, then a rate past it. Consumption is counted from the events your
-              application already sends and totalled when the invoice is built — so no running tally
-              anywhere can drift away from what the customer is billed, and there is no argument at
-              the end of the month about whose number is right.
-            </p>
-          </Reveal>
-
-          <Reveal delay={140}>
-            <Shot
-              src="/product/usage.webp"
-              alt="A customer who has used 161,600 tokens of a 100,000 allowance, with the overage worked out in blocks and priced."
-              width={1072}
-              height={596}
-              caption={SAMPLE}
-            />
-          </Reveal>
-        </div>
-      </Band>
-
-      {/* -- Portal ------------------------------------------------------------ */}
-      <Band tone="raised">
-        <div className="grid items-center gap-14 lg:grid-cols-[0.95fr_1.05fr]">
-          <Reveal>
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
-              Customer portal
-            </p>
-            <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Don&rsquo;t build another billing page for your customers.
-            </h2>
-            <p className="mt-6 max-w-readable text-lg leading-relaxed text-muted">
-              Your customers can pay what they owe, swap a card, read past invoices and cancel — on a
-              page you did not build and do not support. Every billing email carries a link straight
-              into it. No password, no account to recover, no ticket.
-            </p>
-            <p className="mt-4 max-w-readable text-lg leading-relaxed text-ink">
-              Your team builds the product. {BRAND.name} handles the billing experience.
-            </p>
-          </Reveal>
-
-          <Reveal delay={140}>
-            <Shot
-              src="/product/portal.webp"
-              alt="The customer billing portal: an outstanding invoice with a Pay now button, the subscription and when access ends, the saved card, and the invoice history."
-              width={1310}
-              height={1010}
-              caption="Real customer portal, test mode"
-            />
-          </Reveal>
-        </div>
-      </Band>
+      {/* -- The lifecycle, pinned --------------------------------------------
+          These four were four near-identical bands: eyebrow, claim, paragraph,
+          screenshot, alternating sides. They are one pinned sequence now — see
+          the note in scroll-stage.tsx for why, and for what happens on a phone
+          or under reduced motion. */}
+      <ScrollStage
+        eyebrow="What it runs, month after month"
+        chapters={LIFECYCLE}
+      />
 
       {/* -- The comparison ----------------------------------------------------- */}
-      <Band>
+      <Band tone="raised">
         <Reveal>
           <h2 className="max-w-readable text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
             There are two ways to build subscriptions.
@@ -282,10 +275,13 @@ export default function Home() {
                 <Arrow />
                 <Row label="Paystack" />
               </div>
-              <p className="mt-7 text-sm font-medium">Your team builds and maintains:</p>
+              <p className="mt-7 text-sm font-medium">
+                Your team builds and maintains:
+              </p>
               <Chips items={BILLING_WORK} tone="muted" />
               <p className="mt-6 border-t border-line pt-5 text-sm leading-relaxed text-muted">
-                Then keeps all of it working, every time a provider changes something.
+                Then keeps all of it working, every time a provider changes
+                something.
               </p>
             </div>
           </Reveal>
@@ -317,18 +313,24 @@ export default function Home() {
               Build your product. Let {BRAND.name} run the billing.
             </h2>
             <p className="mt-5 max-w-readable text-lg leading-relaxed text-muted">
-              Test mode runs the whole lifecycle — a plan, a subscription, an invoice, a card that
-              fails and then recovers — with no provider account and no real card. Built for
-              engineers, founders and AI-assisted builders in Africa.
+              Test mode runs the whole lifecycle — a plan, a subscription, an
+              invoice, a card that fails and then recovers — with no provider
+              account and no real card. Built for engineers, founders and
+              AI-assisted builders in Africa.
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <PrimaryLink />
-              <SecondaryLink href="/features">See everything it does</SecondaryLink>
+              <SecondaryLink href="/features">
+                See everything it does
+              </SecondaryLink>
             </div>
             <p className="mt-10 max-w-readable border-t border-line pt-6 text-[15px] leading-relaxed text-muted">
-              Paystack is verified end to end. Monnify and Flutterwave are not written yet, and the
-              client libraries do not exist.{" "}
-              <Link href="/status" className="border-b border-line text-ink hover:border-accent">
+              Paystack is verified end to end. Monnify and Flutterwave are not
+              written yet, and the client libraries do not exist.{" "}
+              <Link
+                href="/status"
+                className="border-b border-line text-ink hover:border-accent"
+              >
                 The full list of what is and is not built
               </Link>
               .
@@ -357,7 +359,10 @@ function Row({ label, filled = false }: { label: string; filled?: boolean }) {
 
 function Arrow() {
   return (
-    <div aria-hidden className="pl-3.5 font-mono text-[13px] leading-none text-muted">
+    <div
+      aria-hidden
+      className="pl-3.5 font-mono text-[13px] leading-none text-muted"
+    >
       ↓
     </div>
   );

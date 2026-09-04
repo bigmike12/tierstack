@@ -36,6 +36,20 @@ export default {
           "sans-serif",
         ],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        /**
+         * The wordmark face, and only the wordmark. Bricolage Grotesque at 600
+         * is the same face the dashboard already uses for its headings, so the
+         * name reads identically on the marketing site and inside the product.
+         * Body copy and headings stay on the system stack — a single brand face
+         * applied to a whole page is a different site, not a wordmark.
+         */
+        wordmark: [
+          "var(--font-wordmark)",
+          "ui-sans-serif",
+          "-apple-system",
+          "Segoe UI",
+          "sans-serif",
+        ],
       },
       letterSpacing: {
         tightest: "-0.045em",

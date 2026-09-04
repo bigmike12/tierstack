@@ -19,7 +19,7 @@ import { registerCatalogueRoutes } from "./routes/catalogue";
 import { registerCustomerRoutes } from "./routes/customers";
 import { registerEntitlementRoutes } from "./routes/entitlements";
 import { registerInvoiceRoutes } from "./routes/invoices";
-import { registerMetricsRoutes } from "./routes/metrics";
+import { registerMetricsRoutes, registerTimeseriesRoute } from "./routes/metrics";
 import { registerMockRoutes } from "./routes/mock";
 import { registerOrganizationRoutes } from "./routes/organizations";
 import { registerPaymentProviderRoutes } from "./routes/payment-providers";
@@ -122,6 +122,7 @@ export async function buildServer(overrides?: Partial<AppConfig>): Promise<Built
   registerInvoiceRoutes(app, prisma, config, redis);
   registerPortalRoutes(app, prisma, config, redis);
   registerMetricsRoutes(app, prisma);
+  registerTimeseriesRoute(app, prisma);
   registerUsageRoutes(app, prisma, config, redis);
   registerEntitlementRoutes(app, prisma, redis);
   registerMockRoutes(app, prisma, config, redis);

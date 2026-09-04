@@ -64,6 +64,25 @@ export interface OverviewMetrics {
   churnRate: number | null;
 }
 
+/**
+ * The daily series behind the overview charts. Every array in here is exactly
+ * `days.length` long and gap-filled with zeroes, so a chart can index straight
+ * into it without checking whether a quiet day produced a row.
+ */
+export interface TimeseriesMetrics {
+  windowDays: number;
+  /** UTC dates, ascending, one per bucket: "2026-08-05". */
+  days: string[];
+  revenue: { currency: string; points: number[]; total: number; invoices: number }[];
+  subscriptions: { created: number[]; canceled: number[] };
+  customers: { created: number[] };
+  payments: { succeeded: number[]; failed: number[] };
+  /** The live book, one row per plan and currency. */
+  plans: { planId: string; plan: string; currency: string; subscriptions: number; mrr: number }[];
+  invoices: { status: string; count: number }[];
+  topCustomers: { id: string; name: string | null; email: string; currency: string; amount: number }[];
+}
+
 export interface Customer {
   id: string;
   externalId: string | null;

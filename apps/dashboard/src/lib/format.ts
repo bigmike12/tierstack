@@ -1,4 +1,7 @@
-import { CURRENCIES, type CurrencyCode } from "@tierstack/shared";
+// The ./money subpath, not the barrel: these helpers run in client components
+// too, and the barrel re-exports the id generator, which imports node:crypto
+// and fails to bundle for the browser.
+import { CURRENCIES } from "@tierstack/shared/money";
 
 /**
  * Amounts arrive from the API as integer minor units. They are only ever

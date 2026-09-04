@@ -11,53 +11,63 @@
  * NOT drawn from the five — void/delete/remove needs to read as categorically
  * different from a coral warning at a half-second glance, which two shades of
  * the same hue cannot do. See the approved preview for the full reasoning.
+ *
+ * The token blocks are unlayered on purpose. Inside `@layer base` the `.dark`
+ * block was being dropped from the built stylesheet altogether — nothing in
+ * the app puts that class on <html> yet, and the selector never appearing in
+ * the scanned source is enough for it to be shaken out. That made the dark
+ * theme silently undeployable: switching it on would have changed nothing,
+ * because the variables it depends on were not in the CSS. Declaring the
+ * blocks outside the layer ships both sets, so the day a theme toggle is
+ * added it works. The element rules below stay in the base layer, which is
+ * where they belong.
  */
+:root {
+  --background: 0 0% 98%;
+  --foreground: 240 2% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 2% 9%;
+  --muted: 0 0% 94%;
+  --muted-foreground: 240 1% 47%;
+  --border: 240 2% 89%;
+  --input: 240 2% 89%;
+  --ring: 180 47% 45%;
+  --primary: 180 47% 31%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 94%;
+  --secondary-foreground: 240 2% 9%;
+  --destructive: 3 71% 41%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 154 100% 26%;
+  --success-foreground: 0 0% 100%;
+  --warning: 18 100% 40%;
+  --warning-foreground: 0 0% 100%;
+  --radius: 0.6rem;
+}
+
+.dark {
+  --background: 240 2% 8%;
+  --foreground: 240 4% 95%;
+  --card: 240 3% 12%;
+  --card-foreground: 240 4% 95%;
+  --muted: 240 3% 15%;
+  --muted-foreground: 240 1% 62%;
+  --border: 240 2% 20%;
+  --input: 240 2% 20%;
+  --ring: 180 47% 45%;
+  --primary: 180 47% 59%;
+  --primary-foreground: 180 52% 6%;
+  --secondary: 240 3% 15%;
+  --secondary-foreground: 240 4% 95%;
+  --destructive: 3 100% 69%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 100% 61%;
+  --success-foreground: 150 65% 8%;
+  --warning: 18 100% 73%;
+  --warning-foreground: 20 100% 8%;
+}
+
 @layer base {
-  :root {
-    --background: 0 0% 98%;
-    --foreground: 240 2% 9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 2% 9%;
-    --muted: 0 0% 94%;
-    --muted-foreground: 240 1% 47%;
-    --border: 240 2% 89%;
-    --input: 240 2% 89%;
-    --ring: 180 47% 45%;
-    --primary: 180 47% 31%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 94%;
-    --secondary-foreground: 240 2% 9%;
-    --destructive: 3 71% 41%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 154 100% 26%;
-    --success-foreground: 0 0% 100%;
-    --warning: 18 100% 40%;
-    --warning-foreground: 0 0% 100%;
-    --radius: 0.6rem;
-  }
-
-  .dark {
-    --background: 240 2% 8%;
-    --foreground: 240 4% 95%;
-    --card: 240 3% 12%;
-    --card-foreground: 240 4% 95%;
-    --muted: 240 3% 15%;
-    --muted-foreground: 240 1% 62%;
-    --border: 240 2% 20%;
-    --input: 240 2% 20%;
-    --ring: 180 47% 45%;
-    --primary: 180 47% 59%;
-    --primary-foreground: 180 52% 6%;
-    --secondary: 240 3% 15%;
-    --secondary-foreground: 240 4% 95%;
-    --destructive: 3 100% 69%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 152 100% 61%;
-    --success-foreground: 150 65% 8%;
-    --warning: 18 100% 73%;
-    --warning-foreground: 20 100% 8%;
-  }
-
   * {
     border-color: hsl(var(--border));
   }
@@ -75,6 +85,58 @@
     font-family: var(--font-display), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
     letter-spacing: -0.01em;
   }
+}
+
+/* --- Chart palette --------------------------------------------------------
+   Deliberately outside `@layer base`. Tailwind tree-shakes custom rules it
+   puts in a layer when the selector never appears in the scanned source, and
+   `dark` appears nowhere — which is why the `.dark` block above is dropped
+   from the built stylesheet entirely today. Declaring these unlayered means
+   they always ship, and the dark steps are correct the moment anything puts
+   the class on <html>.
+
+   Kept apart from the ten semantic UI roles because they answer a different
+   question. A UI colour has to be legible as a 4px border or a 14px label; a
+   chart colour has to stay distinguishable from the colour beside it for a
+   reader with any of the three common colour-vision deficiencies. Those are
+   not the same constraint — the UI primary, for one, is too low-chroma to sit
+   beside a second hue without both reading as grey.
+
+   Every pair was checked with a validator rather than by eye (OKLab ΔE under
+   protan/deutan/tritan simulation, chroma floor, lightness band, contrast
+   against the card). Two pairs land in the 6–8 ΔE band and are legal only
+   because they carry a second channel: gain/loss is split by the zero
+   baseline — gains above it, losses below — and both are always legended;
+   healthy/at-risk always prints its own value beside it. At-risk amber is
+   below 3:1 on the light card, which is why that value is never encoded by
+   the colour alone. The dark steps were chosen against the dark card, not
+   derived by flipping the light ones. */
+:root {
+  --viz-accent: #297373;
+  --viz-accent-wash: 41 115 115;
+  --viz-healthy: #0d8f6a;
+  --viz-risk: #eda100;
+  --viz-idle: #8a8a8a;
+  --viz-gain: #0d8f6a;
+  --viz-loss: #d03b3b;
+  --viz-grid: #ededed;
+  --viz-axis: #d6d6d6;
+  /* The colour the 2px gaps and rings are cut in. It has to be the card, not
+     the page, or every stacked segment picks up a faint outline. */
+  --viz-surface: #ffffff;
+}
+
+.dark {
+  --viz-accent: #64c7c7;
+  --viz-accent-wash: 100 199 199;
+  --viz-healthy: #199e70;
+  --viz-risk: #c98500;
+  --viz-idle: #88888a;
+  --viz-gain: #199e70;
+  --viz-loss: #e66767;
+  --viz-grid: #2c2c2e;
+  --viz-axis: #3d3d40;
+  --viz-surface: #1e1e1f;
 }
 
 @layer utilities {
