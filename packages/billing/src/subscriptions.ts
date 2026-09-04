@@ -23,6 +23,7 @@ import {
   type PriceSnapshot,
 } from "./pricing";
 import { canRollForward, resolveCurrentPrice } from "./prices";
+import { isPeriodDue } from "./recovery";
 import { loadBillingSettings, loadDunningPolicy } from "./settings";
 import { applyTransition, recordInitialStatus } from "./transitions";
 import type { SubscriptionStatus } from "./state-machine";
@@ -226,11 +227,33 @@ export async function createSubscription(
   });
 }
 
+export interface RenewSubscriptionOptions {
+  /**
+   * Refuse to open a period that is not yet due at `now`.
+   *
+   * The renewals sweep sets this. It selects a batch on `currentPeriodEnd <=
+   * now` and then works through it one subscription at a time, so a row can be
+   * stale by the time its turn comes — most sharply when a payment recovered
+   * the subscription out of UNPAID in between and rebased its period onto the
+   * payment. Renewing on that stale read would open a second period over one
+   * that was just opened, and charge for it.
+   *
+   * The manual `POST /renew` deliberately leaves this off: driving the cycle
+   * forward without waiting a month is the whole point of that endpoint.
+   */
+  onlyWhenDue?: boolean;
+}
+
 /**
  * Opens the next billing period and issues its invoice. Called by the renewal
  * worker when currentPeriodEnd passes, and by tests that fast-forward time.
  */
-export async function renewSubscription(prisma: PrismaClient, subscriptionId: string, now = new Date()) {
+export async function renewSubscription(
+  prisma: PrismaClient,
+  subscriptionId: string,
+  now = new Date(),
+  options: RenewSubscriptionOptions = {}
+) {
   const branding = loadBranding();
 
   return prisma.$transaction(async (tx) => {
@@ -260,6 +283,13 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
       );
     }
 
+    // Read late, under the lock: whatever advanced this subscription while the
+    // caller was queuing behind it already opened the period this call was
+    // going to open.
+    if (options.onlyWhenDue && !isPeriodDue(subscription.currentPeriodEnd, now)) {
+      return { renewed: false as const, invoiceId: null, reason: "period_not_due" as const };
+    }
+
     if (subscription.cancelAtPeriodEnd) {
       await applyTransition(tx, subscription.id, status, "CANCELED", "cancel_at_period_end", {
         canceledAt: now,
@@ -270,7 +300,7 @@ export async function renewSubscription(prisma: PrismaClient, subscriptionId: st
         eventType: "SUBSCRIPTION_CANCELED",
         data: { subscriptionId: subscription.id, customerId: subscription.customerId, status: "CANCELED" },
       });
-      return { renewed: false as const, invoiceId: null };
+      return { renewed: false as const, invoiceId: null, reason: "canceled_at_period_end" as const };
     }
 
     // A price whose economics were edited while this subscription was live was
