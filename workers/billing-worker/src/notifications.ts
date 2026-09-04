@@ -150,10 +150,17 @@ export async function runNotifications(ctx: NotificationContext, now = new Date(
   async function alreadySettled(organizationId: string, dedupeKey: string): Promise<boolean> {
     const existing = await ctx.prisma.emailMessage.findUnique({
       where: { organizationId_dedupeKey: { organizationId, dedupeKey } },
-      select: { status: true, attempts: true },
+      select: { status: true, attempts: true, updatedAt: true },
     });
     if (!existing) return false;
     if (existing.status === "SENT" || existing.status === "SUPPRESSED") return true;
+
+    if (existing.status === "PENDING") {
+      // Mirror STALE_CLAIM_MS in packages/notifications/src/service.ts.
+      const STALE_CLAIM_MS = 15 * 60 * 1000;
+      return now.getTime() - existing.updatedAt.getTime() < STALE_CLAIM_MS;
+    }
+
     // A failure with attempts left is worth rebuilding for; one past the limit
     // is not going to be sent however many times it is rendered.
     return existing.status === "FAILED" && existing.attempts >= MAX_EMAIL_ATTEMPTS;
