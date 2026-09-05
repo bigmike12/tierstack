@@ -320,6 +320,14 @@ export async function applyPaymentResult(
       }
     }
 
+    // When the money actually arrived, according to the provider. Computed here
+    // rather than further down because the attempt records it too, not only the
+    // invoice: reconciliation can settle an attempt hours after the payment
+    // cleared, and `completedAt` — which is when *this* ran — would attribute
+    // that payment to whenever the sweep happened to notice it. Anything billing
+    // on a period boundary needs the first number, not the second.
+    const paidAt = result.paidAt ?? new Date();
+
     await tx.paymentAttempt.update({
       where: { id: attempt.id },
       data: {
@@ -330,6 +338,10 @@ export async function applyPaymentResult(
         checkoutUrl: params.checkoutUrl ?? null,
         rawProviderResponse: (result.raw ?? null) as never,
         completedAt: ["SUCCEEDED", "FAILED", "CANCELED"].includes(result.status) ? new Date() : null,
+        // Only a settled payment has a settlement time. A decline has a
+        // completedAt and nothing else, which is the distinction the two
+        // columns exist to keep.
+        paidAt: result.status === "SUCCEEDED" ? paidAt : null,
       },
     });
 
@@ -354,7 +366,6 @@ export async function applyPaymentResult(
       });
     }
 
-    const paidAt = result.paidAt ?? new Date();
     const paidInvoice = await applyPaymentToInvoice(tx, invoice.id, result.amount.amount, paidAt);
 
     if (paidInvoice.status === "PAID") {

@@ -670,7 +670,9 @@ and the data. A test key cannot read live rows.
 | `notifications` | every 5 min | sends what the state says a customer should have been told |
 | `grace-expiry` | every 10 min | applies the configured terminal action when grace runs out |
 | `incomplete-expiry` | every 15 min | expires abandoned checkouts and voids their invoices |
-| `reconciliation` | every 10 min | asks the provider about attempts no webhook ever reported |
+| `reconciliation` | every 2 min | asks the provider about attempts no webhook ever reported |
+| `webhook-deliveries` | every minute | sends outbound events to the developer's own endpoints |
+| `platform-metering` | every 15 min | feeds collected volume into a reseller's percentage fee |
 | `idempotency-sweep` | hourly | reclaims expired idempotency records |
 | `session-sweep` | daily 03:00 | reclaims expired sessions |
 | usage rollups | usage-worker | pre-aggregates high-volume meters |
@@ -678,6 +680,129 @@ and the data. A test key cannot read live rows.
 Every job is idempotent and selects on an indexed predicate, so a run that
 finds nothing to do costs one query and a run that overlaps a previous run
 cannot double-charge.
+
+### Metering what the platform collected
+
+A price can say "₦5,000 a month plus 2.5% of volume" — see §7 — but until
+something records the volume, that price bills its base fee and nothing else.
+`platform-metering` is that something, for the one case the platform can answer
+without being told: money it collected itself.
+
+The shape is fixed by the problem rather than chosen. Metering what a
+merchant's own customers pay them is circular — what a customer pays through
+this platform *is* the merchant's subscription invoice, so a percentage of it
+would be a percentage of itself. The volume worth billing is always somebody
+else's: what organization X collected, billed to X by whoever resells this
+platform to them. So one organization — `PLATFORM_ORGANIZATION_ID` — has other
+organizations as its customers, joined by `Customer.externalId`, which already
+means "the subscriber's own identifier in the caller's system".
+
+Nothing about that is creator-specific. A marketplace, a vertical SaaS and a
+payment facilitator all have the same billing relationship; the creator platform
+is one instance of it.
+
+Three properties keep the cross-organization read honest:
+
+- it **only ever writes into the platform organization**, so no merchant's rows
+  move anywhere they were not put
+- **enrolment is explicit**: an organization is metered only when a `Customer`
+  row for it already exists in the platform organization *and* that customer
+  holds a live subscription on a metered price. Neither is created
+  automatically, so nobody is silently opted in to being charged
+- the platform **never meters itself**, because its own collections are the fees
+  it just charged
+
+Like the notifications job it derives rather than emits: a webhook crediting an
+invoice must not hold a row lock while it writes somebody else's usage event.
+Deriving means the job must be safe to run repeatedly, which is what
+`UsageEvent`'s unique `(organizationId, eventId)` buys — the event id **is** the
+`PaymentAttempt` id. That is also why there is no watermark to keep: each pass
+re-reads a day of settled attempts and writes only the missing ones, so a worker
+that was down for six hours catches up on its next tick with nothing to repair.
+
+#### Freshness and correctness are separate jobs
+
+The scheduled pass is **not** what makes an invoice right, and it must not be.
+Usage bills in arrears over a window that closes at the moment of renewal, and an
+invoice is immutable once finalized — so a payment settling after the last pass
+but before the period ended would land in a period that had already been billed
+and be owed forever without appearing on any invoice. Silent, permanent, and
+always in the merchant's favour rather than the platform's, which is the worst
+direction for an error nobody is looking for.
+
+So `renewSubscription` flushes that one subscription's volume itself, inside its
+own transaction, one statement before usage is read:
+
+| | |
+|---|---|
+| `flushPlatformVolume` | **correctness** — scoped to the subscription being renewed, bounded by the period being invoiced, inside the advisory lock the renewal already holds |
+| `platform-metering` | **freshness** — keeps the dashboard current between invoices, and is allowed to fall behind |
+
+Both go through one `meterOrganizationVolume`, so there is no way for the two to
+disagree about what counts as volume, and both write the same row keyed on the
+same attempt — so running concurrently is a conflict PostgreSQL resolves rather
+than a double charge. `renewSubscription` calls the flush unconditionally and
+learns nothing about platform billing by doing so: the module decides, and
+returns immediately unless the deployment resells itself.
+
+The residual window is a transaction committing its `completedAt` after the
+flush has already scanned past it — bounded by commit latency rather than by a
+job schedule, and the same read-skew any snapshot aggregation has.
+
+#### Cost
+
+Volume is walked in pages and written with `createMany({ skipDuplicates: true })`,
+so a window holding a thousand payments costs one select and one insert rather
+than three thousand round trips, and enrolment is paged so a platform with a
+hundred thousand merchants does not load a hundred thousand rows to decide what
+to do. `payment_attempts` carries `(organizationId, status, completedAt)` for
+exactly this scan.
+
+`buildVolumeEvents` is pure and takes attempts rather than a query. That is the
+seam: making this event-driven later means feeding the same function attempt ids
+from a queue instead of a scan, writing the same rows under the same key, with
+nothing in the pricing or billing model moving.
+
+#### One enrolment meters per customer
+
+`UsageEvent` is unique on `(organizationId, eventId)` and the event id **is** the
+`PaymentAttempt` id. That is what makes every path idempotent, and it encodes an
+assumption: one meter per attempt per platform organization. Nothing in the
+schema stops a customer of the platform holding two subscriptions on metered
+prices — a duplicate enrolment, or a plan migration where the old one was never
+cancelled — and those produce the same key against two different meters, so the
+second insert is skipped and one meter silently receives nothing.
+
+Widening the key to include the meter would fix that and break something worse:
+it changes the identity of every row already written, so the next pass
+re-inserts all of history under new ids and genuinely double-counts. The
+assumption is enforced instead. `canonicalEnrolmentId` picks the **oldest** live
+metered enrolment for a customer, both the flush and the sweep resolve it the
+same way — if they disagreed, whichever ran first would decide where the volume
+landed — and a second enrolment is counted and named rather than silently
+starved.
+
+#### Settlement time, not processing time
+
+`PaymentAttempt` carries two timestamps and they mean different things.
+`completedAt` is when this platform finished processing an outcome; `paidAt` is
+when the provider says the money arrived. They are the same to the second for a
+payment a webhook resolved promptly, and hours apart for one reconciliation
+picked up — which is exactly the payment that lands on the wrong side of a period
+boundary if you bill on the first number.
+
+Metering uses `paidAt` for both the scan window and the event timestamp, so a
+payment that cleared at 23:58 is billed to the period it cleared in even when the
+sweep only resolved it at 00:05 the next morning. `completedAt` is the fallback,
+for rows settled before the column existed and for the width of a rolling deploy;
+it is never reached on a row the current settlement path wrote.
+
+Two things are deliberately left out rather than guessed. Volume collected in a
+currency the platform's price is not denominated in is **rejected and logged**,
+never converted — a meter holds one scalar, and this engine has no exchange rate
+that belongs in an invoice. And refunds do not reduce volume, because
+`trackUsage` takes no negative units; a refunded payment stays in the period's
+total until that is addressed deliberately.
 
 ## 17. Invariants
 

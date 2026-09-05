@@ -675,6 +675,14 @@ model PaymentAttempt {
   providerReference String?
   status         PaymentAttemptStatus @default(PENDING)
   attemptNumber  Int
+  /// When the provider says the money actually arrived, which is not the same
+  /// as when this platform finished processing the outcome. Reconciliation can
+  /// settle an attempt hours after the payment cleared, and anything billing on
+  /// a period boundary — platform volume metering — has to use this or it
+  /// attributes the payment to the wrong month. Null on a failed attempt, and
+  /// on historical rows settled before this column existed, where completedAt
+  /// is the only estimate available.
+  paidAt         DateTime?
   failureCode    String?
   failureReason  String?
   /// Where the customer completes payment, for redirect-based flows.
@@ -695,6 +703,12 @@ model PaymentAttempt {
   @@unique([organizationId, provider, providerReference])
   @@index([invoiceId, attemptNumber])
   @@index([organizationId, status])
+  // Platform volume metering walks one organization's settled attempts over a
+  // window, at renewal and on a schedule. The window is settlement time, not
+  // processing time, so this indexes paidAt — without it that is a status scan
+  // filtered in memory, which gets slower for every payment the organization
+  // has ever taken.
+  @@index([organizationId, status, paidAt])
   @@map("payment_attempts")
 }
 
