@@ -763,6 +763,40 @@ seam: making this event-driven later means feeding the same function attempt ids
 from a queue instead of a scan, writing the same rows under the same key, with
 nothing in the pricing or billing model moving.
 
+#### One enrolment meters per customer
+
+`UsageEvent` is unique on `(organizationId, eventId)` and the event id **is** the
+`PaymentAttempt` id. That is what makes every path idempotent, and it encodes an
+assumption: one meter per attempt per platform organization. Nothing in the
+schema stops a customer of the platform holding two subscriptions on metered
+prices — a duplicate enrolment, or a plan migration where the old one was never
+cancelled — and those produce the same key against two different meters, so the
+second insert is skipped and one meter silently receives nothing.
+
+Widening the key to include the meter would fix that and break something worse:
+it changes the identity of every row already written, so the next pass
+re-inserts all of history under new ids and genuinely double-counts. The
+assumption is enforced instead. `canonicalEnrolmentId` picks the **oldest** live
+metered enrolment for a customer, both the flush and the sweep resolve it the
+same way — if they disagreed, whichever ran first would decide where the volume
+landed — and a second enrolment is counted and named rather than silently
+starved.
+
+#### Settlement time, not processing time
+
+`PaymentAttempt` carries two timestamps and they mean different things.
+`completedAt` is when this platform finished processing an outcome; `paidAt` is
+when the provider says the money arrived. They are the same to the second for a
+payment a webhook resolved promptly, and hours apart for one reconciliation
+picked up — which is exactly the payment that lands on the wrong side of a period
+boundary if you bill on the first number.
+
+Metering uses `paidAt` for both the scan window and the event timestamp, so a
+payment that cleared at 23:58 is billed to the period it cleared in even when the
+sweep only resolved it at 00:05 the next morning. `completedAt` is the fallback,
+for rows settled before the column existed and for the width of a rolling deploy;
+it is never reached on a row the current settlement path wrote.
+
 Two things are deliberately left out rather than guessed. Volume collected in a
 currency the platform's price is not denominated in is **rejected and logged**,
 never converted — a meter holds one scalar, and this engine has no exchange rate

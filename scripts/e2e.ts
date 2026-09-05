@@ -2232,6 +2232,7 @@ async function main(): Promise<void> {
       attemptNumber: 99,
       // Inside the period the reseller is about to be invoiced for, and after
       // every metering pass this suite has run.
+      paidAt: new Date(),
       completedAt: new Date(),
     },
   });
@@ -2296,6 +2297,123 @@ async function main(): Promise<void> {
     eventsAfterSecondRenewal === (await prisma.usageEvent.count({
       where: { organizationId: platformOrganizationId, eventId: { not: "" } },
     })), eventsAfterSecondRenewal);
+
+  // -- 18b. Settlement time, not processing time ------------------------------
+  //
+  // Reconciliation resolves an attempt whenever it happens to run, which can be
+  // hours after the money cleared. Billing on that number puts a payment that
+  // cleared at 23:58 onto the following month's invoice — revenue-neutral over a
+  // year, wrong on the invoice a merchant is looking at.
+  section("18b. Settlement time, not processing time");
+
+  const reconciled = await prisma.subscription.findFirstOrThrow({
+    where: { id: enrolmentSubscriptionId },
+    select: { currentPeriodStart: true, currentPeriodEnd: true },
+  });
+  // Cleared one second before the period ends; only noticed an hour after it.
+  const clearedAt = new Date(reconciled.currentPeriodEnd.getTime() - 1_000);
+  const noticedAt = new Date(reconciled.currentPeriodEnd.getTime() + 3_600_000);
+  const lateReconciledId = `pay_recon${stamp}`;
+  await prisma.paymentAttempt.create({
+    data: {
+      id: lateReconciledId,
+      organizationId,
+      invoiceId: anchorInvoice!.id,
+      customerId: anchorInvoice!.customerId,
+      provider: "MOCK",
+      amount: 100_000_000, // NGN 1,000,000
+      currency: "NGN",
+      status: "SUCCEEDED",
+      attemptNumber: 98,
+      paidAt: clearedAt,
+      completedAt: noticedAt,
+    },
+  });
+
+  process.env.PLATFORM_ORGANIZATION_ID = platformOrganizationId;
+  const reconciledPass = await runPlatformVolumeMetering(prisma, {
+    platformOrganizationId,
+    // A window that includes the settlement but excludes the moment it was
+    // processed, which is precisely the case a completedAt scan would miss.
+    now: new Date(reconciled.currentPeriodEnd.getTime()),
+    lookbackMs: 7 * 24 * 3_600_000,
+  });
+  check("an attempt is found by when it cleared, not by when it was processed",
+    reconciledPass.recorded === 1, reconciledPass);
+
+  const reconciledEvent = await prisma.usageEvent.findFirst({
+    where: { organizationId: platformOrganizationId, eventId: lateReconciledId },
+    select: { timestamp: true },
+  });
+  check("and is dated to the settlement, so it lands in the period it belongs to",
+    reconciledEvent?.timestamp.getTime() === clearedAt.getTime(),
+    { stored: reconciledEvent?.timestamp, cleared: clearedAt, noticed: noticedAt });
+
+  // -- 18c. One enrolment meters per customer ---------------------------------
+  //
+  // UsageEvent is unique on (organizationId, eventId) and the event id is the
+  // payment attempt, so two enrolments pointing at two meters produce the same
+  // key: the second insert is skipped and one meter silently receives nothing.
+  // Widening the key would change the identity of every row already written, so
+  // the assumption it encodes is enforced instead.
+  section("18c. One enrolment meters per customer");
+
+  await call("POST", "/v1/usage-meters", {
+    headers: asPlatform(),
+    payload: { code: "PAYMENT_VOLUME_2", name: "Payment volume (duplicate)", unitLabel: "naira", aggregation: "SUM" },
+  });
+  await call("POST", "/v1/prices", {
+    headers: asPlatform(),
+    payload: {
+      planId: "reseller", code: "reseller_duplicate_ngn", currency: "NGN", model: "HYBRID",
+      unitAmount: 500_000, interval: "MONTHLY", usageMeterCode: "PAYMENT_VOLUME_2",
+      usageUnitAmount: 100, usageUnitSize: 40,
+    },
+  });
+  const duplicateEnrolment = await call("POST", "/v1/subscriptions", {
+    headers: asPlatform({ "idempotency-key": `dup-${stamp}` }),
+    payload: {
+      // The same merchant, enrolled a second time — a plan migration where the
+      // first subscription was never cancelled.
+      customerId: enrolment.body.data.subscription.customerId,
+      priceId: "reseller_duplicate_ngn",
+      trialDays: 30,
+    },
+  });
+  const duplicateId = duplicateEnrolment.body.data?.subscription?.id;
+  check("a customer can hold a second metered enrolment — nothing in the schema stops it",
+    typeof duplicateId === "string", duplicateEnrolment.body.error);
+
+  const duplicatePass = await runPlatformVolumeMetering(prisma, { platformOrganizationId });
+  check("the sweep names the duplicate rather than silently starving a meter",
+    duplicatePass.duplicateEnrolments === 1, duplicatePass);
+  const secondMeterEvents = await prisma.usageEvent.count({
+    where: { organizationId: platformOrganizationId, meter: { code: "PAYMENT_VOLUME_2" } },
+  });
+  check("and writes nothing to the meter the duplicate points at", secondMeterEvents === 0, secondMeterEvents);
+
+  // The renewal path has to agree with the sweep, or whichever runs first
+  // decides where a customer's volume lands.
+  const duplicateRenewal = await call("POST", `/v1/subscriptions/${duplicateId}/renew`, {
+    headers: asPlatform(),
+    payload: { collectPayment: false },
+  });
+  const duplicateInvoice = await call("GET", `/v1/invoices/${duplicateRenewal.body.data.invoiceId}`, {
+    headers: asPlatform(),
+  });
+  check("renewing the duplicate meters nothing either",
+    (await prisma.usageEvent.count({
+      where: { organizationId: platformOrganizationId, meter: { code: "PAYMENT_VOLUME_2" } },
+    })) === 0);
+  check("so its invoice bills the base fee and no volume",
+    !duplicateInvoice.body.data.lineItems.some((l: Json) => l.type === "OVERAGE"),
+    duplicateInvoice.body.data.lineItems.map((l: Json) => l.type));
+
+  // The canonical enrolment is unaffected by the existence of the other one.
+  const canonicalStillMeters = await runPlatformVolumeMetering(prisma, { platformOrganizationId });
+  check("the canonical enrolment keeps metering regardless",
+    canonicalStillMeters.considered === 1 && canonicalStillMeters.duplicateEnrolments === 1,
+    canonicalStillMeters);
 
   delete process.env.PLATFORM_ORGANIZATION_ID;
 

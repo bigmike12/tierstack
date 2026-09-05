@@ -144,12 +144,32 @@ export function volumeUnits(amountMinor: number, currency: CurrencyCode): number
   return Math.round(amountMinor / 10 ** minorUnits(currency));
 }
 
-/** A settled payment, reduced to the four fields metering actually reads. */
+/** A settled payment, reduced to the fields metering actually reads. */
 export interface SettledAttempt {
   id: string;
   amount: number;
   currency: string;
+  /** When the provider says the money arrived. Null only on historical rows. */
+  paidAt: Date | null;
+  /** When this platform finished processing the outcome. The fallback. */
   completedAt: Date | null;
+}
+
+/**
+ * The moment a payment counts as having happened.
+ *
+ * `paidAt` is what the provider said; `completedAt` is when this platform
+ * noticed. They are the same to the second for a payment a webhook resolved
+ * promptly, and hours apart for one reconciliation picked up — which is exactly
+ * the case that lands on the wrong side of a period boundary if you use the
+ * second number.
+ *
+ * The fallback exists for rows settled before `paidAt` was a column and for the
+ * width of a rolling deploy, where an older process can still write a settled
+ * attempt without one. It is never reached on a row this code path wrote.
+ */
+export function settledAt(attempt: SettledAttempt, now: Date): Date {
+  return attempt.paidAt ?? attempt.completedAt ?? now;
 }
 
 export interface VolumeEventRow {
@@ -228,11 +248,12 @@ export function buildVolumeEvents(
       // the unique constraint rather than a second charge.
       eventId: attempt.id,
       units,
-      // Dated when the money arrived, not when this ran. A payment that settles
-      // at 23:58 on the last day of a period belongs to that period even if the
-      // flush happens after midnight, and `getPeriodUsage` filters on exactly
-      // this column.
-      timestamp: attempt.completedAt ?? context.now,
+      // Dated when the money arrived, not when this ran and not when the
+      // outcome was processed. A payment that settles at 23:58 on the last day
+      // of a period belongs to that period even if a reconciliation sweep only
+      // resolved it at 00:05 the next morning, and `getPeriodUsage` filters on
+      // exactly this column.
+      timestamp: settledAt(attempt, context.now),
       metadata: {
         source: "platform_volume",
         sourceOrganizationId: context.sourceOrganizationId,
@@ -281,9 +302,17 @@ export async function meterOrganizationVolume(
       where: {
         organizationId: params.sourceOrganizationId,
         status: "SUCCEEDED",
-        completedAt: { gte: params.since, lt: params.until },
+        // The window is settlement time, because that is what decides which
+        // period a payment belongs to. The second branch is the fallback for
+        // rows settled before `paidAt` existed and for the width of a rolling
+        // deploy; after the backfill it matches nothing, so it costs a planner
+        // decision rather than a scan.
+        OR: [
+          { paidAt: { gte: params.since, lt: params.until } },
+          { paidAt: null, completedAt: { gte: params.since, lt: params.until } },
+        ],
       },
-      select: { id: true, amount: true, currency: true, completedAt: true },
+      select: { id: true, amount: true, currency: true, paidAt: true, completedAt: true },
       orderBy: { id: "asc" },
       take: SCAN_PAGE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -347,6 +376,45 @@ function enrolmentContext(subscription: {
 }
 
 /**
+ * Which of a customer's enrolments owns their metering.
+ *
+ * Nothing stops one customer of the platform holding two subscriptions on
+ * metered prices — a duplicate enrolment, or a plan migration where the old one
+ * was never cancelled. That configuration is a problem the idempotency key
+ * cannot solve, because `UsageEvent` is unique on `(organizationId, eventId)`
+ * and the event id is the payment attempt: two enrolments pointing at two
+ * different meters produce the same key, so the second insert is skipped and one
+ * meter silently receives nothing.
+ *
+ * Widening the key to include the meter would fix that and break something
+ * worse — it changes the identity of every row already written, so the next pass
+ * re-inserts all of history under new ids and genuinely double-counts. So the
+ * assumption the key encodes is enforced instead: **one enrolment meters, the
+ * oldest one, and the rest are reported rather than silently starved.**
+ *
+ * Both the flush and the scheduled pass resolve this the same way, which is the
+ * point. If they disagreed the winner would depend on which ran first, which is
+ * the nondeterminism this exists to remove.
+ */
+export async function canonicalEnrolmentId(
+  db: PrismaClient | TransactionClient,
+  platformOrganizationId: string,
+  customerId: string
+): Promise<string | null> {
+  const oldest = await db.subscription.findFirst({
+    where: {
+      organizationId: platformOrganizationId,
+      customerId,
+      status: { in: ENROLLED_STATUSES as unknown as never },
+      price: { usageMeterId: { not: null } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  return oldest?.id ?? null;
+}
+
+/**
  * Brings one subscription's metered volume up to date, inside the transaction
  * that is about to invoice it.
  *
@@ -403,6 +471,25 @@ export async function flushPlatformVolume(
   const context = enrolmentContext(subscription, platformId);
   if (!context) return null;
 
+  // A customer with two metered enrolments can only have one of them metered —
+  // see canonicalEnrolmentId. Renewing the other one must not write events
+  // under a key the canonical enrolment owns, or the two race and whichever
+  // renews first decides where the volume lands.
+  const canonical = await canonicalEnrolmentId(tx, platformId, context.customerId);
+  if (canonical !== params.subscriptionId) {
+    return {
+      recorded: 0,
+      skipped: 0,
+      rejectedCount: 1,
+      rejected: [
+        {
+          attemptId: params.subscriptionId,
+          reason: `not the canonical enrolment for this customer (${canonical ?? "none"} is)`,
+        },
+      ],
+    };
+  }
+
   return meterOrganizationVolume(tx, {
     platformOrganizationId: platformId,
     ...context,
@@ -421,6 +508,11 @@ export interface PlatformMeteringResult {
   skipped: number;
   /** Attempts that could not be metered. */
   rejectedCount: number;
+  /**
+   * Customers holding more than one metered enrolment. Never expected, and
+   * loud when it happens: one of those subscriptions is billing nothing.
+   */
+  duplicateEnrolments: number;
   /** A sample of the above, for the worker to log. */
   rejected: VolumeRejection[];
 }
@@ -454,13 +546,21 @@ export async function runPlatformVolumeMetering(
     recorded: 0,
     skipped: 0,
     rejectedCount: 0,
+    duplicateEnrolments: 0,
     rejected: [],
   };
 
   // Paged rather than read whole: a platform with a hundred thousand merchants
   // enrolled must not load a hundred thousand rows to find out what to do.
-  let cursor: string | undefined;
-  for (;;) {
+  //
+  // Ordered by age, and offset-paged rather than cursor-paged, because the
+  // ordering has to match `canonicalEnrolmentId` exactly — first seen must be
+  // the same subscription that function would pick, or the two paths disagree
+  // about which enrolment owns a customer's volume. A row shifting between
+  // pages under offset pagination costs at most a miss the next pass repairs,
+  // which is what every write here is already safe against.
+  const seenCustomers = new Set<string>();
+  for (let page = 0; ; page += 1) {
     const enrolled = await prisma.subscription.findMany({
       where: {
         organizationId: params.platformOrganizationId,
@@ -478,15 +578,31 @@ export async function runPlatformVolumeMetering(
           select: { currency: true, usageMeterId: true, usageMeter: { select: { active: true } } },
         },
       },
-      orderBy: { id: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: ENROLMENT_PAGE,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      skip: page * ENROLMENT_PAGE,
     });
     if (enrolled.length === 0) break;
 
     for (const subscription of enrolled) {
       const context = enrolmentContext(subscription, params.platformOrganizationId);
       if (!context) continue;
+
+      // One enrolment meters per customer, and it is the oldest. A second one
+      // is a misconfiguration that would otherwise starve a meter silently, so
+      // it is counted and named instead.
+      if (seenCustomers.has(context.customerId)) {
+        result.duplicateEnrolments += 1;
+        result.rejectedCount += 1;
+        if (result.rejected.length < MAX_RETAINED_REJECTIONS) {
+          result.rejected.push({
+            attemptId: subscription.id,
+            reason: "duplicate metered enrolment for this customer; only the oldest meters",
+          });
+        }
+        continue;
+      }
+      seenCustomers.add(context.customerId);
 
       result.considered += 1;
 
@@ -507,7 +623,6 @@ export async function runPlatformVolumeMetering(
     }
 
     if (enrolled.length < ENROLMENT_PAGE) break;
-    cursor = enrolled[enrolled.length - 1]!.id;
   }
 
   return result;

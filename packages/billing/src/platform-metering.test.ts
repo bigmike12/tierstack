@@ -4,6 +4,7 @@ import {
   buildVolumeEvents,
   LOOKBACK_MS,
   platformOrganizationId,
+  settledAt,
   volumeUnits,
   type BuildVolumeEventsContext,
   type SettledAttempt,
@@ -22,6 +23,7 @@ const attempt = (over: Partial<SettledAttempt> = {}): SettledAttempt => ({
   id: "pay_1",
   amount: 800_000_000,
   currency: "NGN",
+  paidAt: new Date("2026-09-01T10:00:00Z"),
   completedAt: new Date("2026-09-01T10:00:00Z"),
   ...over,
 });
@@ -61,17 +63,17 @@ describe("platform volume metering", () => {
       expect(rows[0]!.units).toBe(8_000_000);
     });
 
-    it("dates the event when the money arrived, not when it was noticed", () => {
-      // A payment that settles at 23:58 on the last day of a period belongs to
-      // that period even when the flush runs after midnight.
-      const settled = new Date("2026-08-31T23:58:00Z");
-      const { rows } = buildVolumeEvents([attempt({ completedAt: settled })], context);
-      expect(rows[0]!.timestamp).toEqual(settled);
-    });
-
-    it("falls back to now only when the attempt carries no completion time", () => {
-      const { rows } = buildVolumeEvents([attempt({ completedAt: null })], context);
-      expect(rows[0]!.timestamp).toEqual(context.now);
+    it("dates the event when the money arrived, not when the outcome was processed", () => {
+      // The reconciliation case: cleared at 23:58 on the last day of a period,
+      // resolved by the sweep at 00:05 the next morning. Billing it on
+      // completedAt puts a August payment on the September invoice.
+      const cleared = new Date("2026-08-31T23:58:00Z");
+      const noticed = new Date("2026-09-01T00:05:00Z");
+      const { rows } = buildVolumeEvents(
+        [attempt({ paidAt: cleared, completedAt: noticed })],
+        context
+      );
+      expect(rows[0]!.timestamp).toEqual(cleared);
     });
 
     it("names the organization the volume came from, so an event can be traced back", () => {
@@ -134,6 +136,25 @@ describe("platform volume metering", () => {
       );
       expect(rows.map((r) => r.eventId)).toEqual(["pay_ok_1", "pay_ok_2"]);
       expect(rejected.map((r) => r.attemptId)).toEqual(["pay_usd"]);
+    });
+  });
+
+  describe("settledAt", () => {
+    it("prefers what the provider said over when this platform noticed", () => {
+      const cleared = new Date("2026-08-31T23:58:00Z");
+      expect(settledAt(attempt({ paidAt: cleared, completedAt: new Date("2026-09-01T00:05:00Z") }), context.now))
+        .toEqual(cleared);
+    });
+
+    it("falls back to processing time for a row settled before paidAt existed", () => {
+      // Historical rows and the width of a rolling deploy. Never reached on a
+      // row the current settlement path wrote.
+      const noticed = new Date("2026-08-20T09:00:00Z");
+      expect(settledAt(attempt({ paidAt: null, completedAt: noticed }), context.now)).toEqual(noticed);
+    });
+
+    it("falls back to now only when an attempt carries neither", () => {
+      expect(settledAt(attempt({ paidAt: null, completedAt: null }), context.now)).toEqual(context.now);
     });
   });
 
