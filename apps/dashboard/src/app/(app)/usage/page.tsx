@@ -191,7 +191,12 @@ export default async function UsagePage({
                             <Mono>{snapshot.meterCode}</Mono> · {titleCase(snapshot.aggregation)}
                           </CardDescription>
                         </div>
-                        {snapshot.overage > 0 ? (
+                        {/* The cap outranks the allowance: once it has bitten, what the
+                            customer owes has stopped tracking what they consumed, and that
+                            is the more surprising fact of the two. */}
+                        {snapshot.capApplied ? (
+                          <Badge tone="info">Cap reached</Badge>
+                        ) : snapshot.overage > 0 ? (
                           <Badge tone="warning">Over allowance</Badge>
                         ) : snapshot.included > 0 ? (
                           <Badge tone="success">Within allowance</Badge>
@@ -262,11 +267,27 @@ export default async function UsagePage({
                               {snapshot.overageAmount === null
                                 ? "—"
                                 : formatAmount(snapshot.overageAmount, usage.currency ?? "NGN")}
+                              {/* Naming the figure the cap replaced is the whole point of
+                                  saying anything: a ceiling on its own looks identical
+                                  whether it saved the customer ₦20 or ₦2,000,000. */}
+                              {snapshot.capApplied &&
+                              snapshot.uncappedOverageAmount !== null &&
+                              snapshot.uncappedOverageAmount !== undefined ? (
+                                <span className="block text-xs font-normal text-muted-foreground">
+                                  from {formatAmount(snapshot.uncappedOverageAmount, usage.currency ?? "NGN")}
+                                </span>
+                              ) : null}
                             </dd>
                           </div>
                         </dl>
 
-                        {snapshot.overage > 0 ? (
+                        {snapshot.capApplied ? (
+                          <p className="text-xs text-muted-foreground">
+                            The cap held this charge at{" "}
+                            {formatAmount(snapshot.capAmount ?? 0, usage.currency ?? "NGN")} for the period.
+                            Usage keeps being recorded past it — only the charge stops rising.
+                          </p>
+                        ) : snapshot.overage > 0 ? (
                           <p className="text-xs text-muted-foreground">
                             Billed in arrears, on the invoice that opens the next period.
                           </p>

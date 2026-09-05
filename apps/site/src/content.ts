@@ -57,7 +57,15 @@ export const CAPABILITIES = [
   {
     group: "Usage",
     line: "Charging for what people actually consume.",
-    items: ["Usage meters", "Event ingestion", "Quotas", "Overages", "Metered billing"],
+    items: [
+      "Usage meters",
+      "Event ingestion",
+      "Quotas",
+      "Overages",
+      "Metered billing",
+      "Percentage fees",
+      "Fee caps",
+    ],
   },
   {
     group: "Customer billing",
@@ -77,15 +85,17 @@ export const WORKING = [
   "Subscriptions, upgrades, downgrades and proration",
   "Price versioning, with subscribers moved at their next renewal",
   "Invoices, usage metering and entitlements",
+  "Percentage fees, with a ceiling per billing period",
   "Paystack — checkout, webhooks, stored cards, unattended renewals",
   "Failed-payment recovery and the emails that go with it",
   "A billing portal your customers use themselves",
+  "Webhooks to your own application, signed and retried",
+  "Node and Python SDKs",
 ];
 
 export const NOT_YET = [
   "Monnify and Flutterwave — the adapters are not written",
-  "TypeScript and React client libraries — the API is HTTP for now",
-  "Outbound webhooks to your application — provider webhooks come in, none go out",
+  "A React library — the Node and Python SDKs are built, neither is published yet",
   "Coupons and referrals",
   "Public pricing — it will run on this product, so the page waits for the product",
 ];
