@@ -386,14 +386,14 @@ export async function runPlatformMetering(ctx: JobContext, now = new Date()) {
   // currency its platform price is not denominated in is being under-billed
   // silently, and nothing else in the system would say so.
   for (const rejection of result.rejected.slice(0, 10)) {
-    ctx.log("volume could not be metered", rejection);
+    ctx.log("volume could not be metered", { ...rejection });
   }
 
   return {
     considered: result.considered,
     recorded: result.recorded,
     skipped: result.skipped,
-    rejected: result.rejected.length,
+    rejected: result.rejectedCount,
   };
 }
 

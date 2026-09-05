@@ -695,6 +695,11 @@ model PaymentAttempt {
   @@unique([organizationId, provider, providerReference])
   @@index([invoiceId, attemptNumber])
   @@index([organizationId, status])
+  // Platform volume metering walks one organization's settled attempts over a
+  // window, at renewal and on a schedule. Without completedAt in the index that
+  // is a status scan with the window filtered in memory, which gets slower for
+  // every payment the organization has ever taken.
+  @@index([organizationId, status, completedAt])
   @@map("payment_attempts")
 }
 

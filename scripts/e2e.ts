@@ -2141,7 +2141,7 @@ async function main(): Promise<void> {
     firstPass.considered === 1, firstPass);
   check("every settled payment is metered once", firstPass.recorded === settledNgn.length, firstPass);
   check("volume collected in another currency is rejected rather than added to the wrong total",
-    firstPass.rejected.length === settledUsd, { rejected: firstPass.rejected, settledUsd });
+    firstPass.rejectedCount === settledUsd, { rejected: firstPass.rejected, settledUsd });
 
   const volumeEvents = await prisma.usageEvent.findMany({
     where: { organizationId: platformOrganizationId },
@@ -2202,6 +2202,102 @@ async function main(): Promise<void> {
   check("and prices it at 2.5%, or the ceiling, whichever is lower",
     volumeSnapshot?.overageAmount === Math.min(Math.ceil(meteredNaira / 40) * 100, 5_000_000),
     volumeSnapshot);
+
+  // -- 18a. The renewal-time flush -------------------------------------------
+  //
+  // The scheduled pass is freshness; this is correctness. Usage bills in arrears
+  // over a window that closes at renewal, and an invoice is immutable once
+  // finalized — so a payment settling after the last pass but before the period
+  // ends would land in a period that has already been billed and never appear on
+  // any invoice. Silently, permanently, and against the platform rather than the
+  // merchant. The flush inside the renewal transaction is what closes that, and
+  // this is the test that would fail without it.
+  section("18a. The renewal-time flush");
+
+  const anchorInvoice = await prisma.invoice.findFirst({
+    where: { organizationId, status: "PAID" },
+    select: { id: true, customerId: true },
+  });
+  const lateAttemptId = `pay_late${stamp}`;
+  await prisma.paymentAttempt.create({
+    data: {
+      id: lateAttemptId,
+      organizationId,
+      invoiceId: anchorInvoice!.id,
+      customerId: anchorInvoice!.customerId,
+      provider: "MOCK",
+      amount: 200_000_000, // NGN 2,000,000
+      currency: "NGN",
+      status: "SUCCEEDED",
+      attemptNumber: 99,
+      // Inside the period the reseller is about to be invoiced for, and after
+      // every metering pass this suite has run.
+      completedAt: new Date(),
+    },
+  });
+
+  const beforeFlush = await prisma.usageEvent.count({
+    where: { organizationId: platformOrganizationId, eventId: lateAttemptId },
+  });
+  check("a payment settling after the last metering pass is not yet metered", beforeFlush === 0, beforeFlush);
+
+  const volumeBeforeFlush = (await prisma.usageEvent.aggregate({
+    where: { organizationId: platformOrganizationId },
+    _sum: { units: true },
+  }))._sum.units ?? 0;
+
+  // The flush reads this the way every deployment does, so the test exercises
+  // the same switch production does rather than a parameter only it can set.
+  process.env.PLATFORM_ORGANIZATION_ID = platformOrganizationId;
+  const flushedRenewal = await call("POST", `/v1/subscriptions/${enrolmentSubscriptionId}/renew`, {
+    headers: asPlatform(),
+    payload: { collectPayment: false },
+  });
+  check("the reseller's renewal succeeds", flushedRenewal.body.data?.renewed === true, flushedRenewal.body);
+
+  const afterFlush = await prisma.usageEvent.count({
+    where: { organizationId: platformOrganizationId, eventId: lateAttemptId },
+  });
+  check("renewal metered it before reading usage, without waiting for the scheduled pass",
+    afterFlush === 1, afterFlush);
+
+  const flushedInvoice = await call("GET", `/v1/invoices/${flushedRenewal.body.data.invoiceId}`, {
+    headers: asPlatform(),
+  });
+  const flushedOverage = flushedInvoice.body.data.lineItems.find((l: Json) => l.type === "OVERAGE");
+  const expectedVolume = volumeBeforeFlush + 2_000_000;
+  check("so the invoice bills the volume that settled inside the period, not the stale total",
+    flushedOverage?.amount === Math.min(Math.ceil(expectedVolume / 40) * 100, 5_000_000),
+    { line: flushedOverage?.amount, expectedVolume });
+  check("and the line describes it as a percentage of the full amount",
+    typeof flushedOverage?.description === "string" &&
+      flushedOverage.description.includes("2.5% of"),
+    flushedOverage?.description);
+
+  // Running the scheduled pass afterwards must find nothing left to do: both
+  // paths write the same row keyed on the same attempt, so they cannot
+  // double-count each other.
+  const afterRenewalPass = await runPlatformVolumeMetering(prisma, { platformOrganizationId });
+  check("the scheduled pass and the flush cannot double-count each other",
+    afterRenewalPass.recorded === 0, afterRenewalPass);
+
+  // A second renewal re-runs the flush over a period with nothing new in it.
+  // It has to be free, or every renewal rewrites its own history.
+  const secondRenewal = await call("POST", `/v1/subscriptions/${enrolmentSubscriptionId}/renew`, {
+    headers: asPlatform(),
+    payload: { collectPayment: false },
+  });
+  check("a second renewal re-runs the flush harmlessly", secondRenewal.body.data?.renewed === true,
+    secondRenewal.body.error);
+  const eventsAfterSecondRenewal = await prisma.usageEvent.count({
+    where: { organizationId: platformOrganizationId },
+  });
+  check("and writes no duplicate events",
+    eventsAfterSecondRenewal === (await prisma.usageEvent.count({
+      where: { organizationId: platformOrganizationId, eventId: { not: "" } },
+    })), eventsAfterSecondRenewal);
+
+  delete process.env.PLATFORM_ORGANIZATION_ID;
 
   // -- summary ---------------------------------------------------------------
   await app.close();

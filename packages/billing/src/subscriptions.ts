@@ -23,6 +23,7 @@ import {
   type ComputedLine,
   type PriceSnapshot,
 } from "./pricing";
+import { flushPlatformVolume } from "./platform-metering";
 import { canRollForward, resolveCurrentPrice } from "./prices";
 import { isPeriodDue } from "./recovery";
 import { loadBillingSettings, loadDunningPolicy } from "./settings";
@@ -362,6 +363,30 @@ export async function renewSubscription(
         start: subscription.currentPeriodStart,
         end: subscription.currentPeriodEnd,
       };
+
+      // Bring metered volume up to date *before* it is read, for the one kind
+      // of meter this platform fills itself.
+      //
+      // Usage bills in arrears over a window that closes right here, and an
+      // invoice is immutable once finalized. A payment that settled after the
+      // last scheduled metering pass but before this period ended would
+      // otherwise land in a period that has already been billed, and be owed
+      // forever without appearing on any invoice — silently, permanently, and
+      // always against the platform rather than the merchant. Flushing inside
+      // this transaction, one statement before the read, is what closes it.
+      //
+      // A no-op on every deployment that does not resell itself, and on every
+      // subscription that is not an enrolment. Nothing about platform billing
+      // reaches this function beyond the call.
+      await flushPlatformVolume(tx, {
+        subscriptionId: subscription.id,
+        organizationId: subscription.organizationId,
+        customerId: subscription.customerId,
+        since: closed.start,
+        until: closed.end,
+        now,
+      });
+
       const usage = await getUsageSnapshot(tx, {
         organizationId: subscription.organizationId,
         customerId: subscription.customerId,

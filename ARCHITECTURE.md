@@ -720,6 +720,49 @@ Deriving means the job must be safe to run repeatedly, which is what
 re-reads a day of settled attempts and writes only the missing ones, so a worker
 that was down for six hours catches up on its next tick with nothing to repair.
 
+#### Freshness and correctness are separate jobs
+
+The scheduled pass is **not** what makes an invoice right, and it must not be.
+Usage bills in arrears over a window that closes at the moment of renewal, and an
+invoice is immutable once finalized — so a payment settling after the last pass
+but before the period ended would land in a period that had already been billed
+and be owed forever without appearing on any invoice. Silent, permanent, and
+always in the merchant's favour rather than the platform's, which is the worst
+direction for an error nobody is looking for.
+
+So `renewSubscription` flushes that one subscription's volume itself, inside its
+own transaction, one statement before usage is read:
+
+| | |
+|---|---|
+| `flushPlatformVolume` | **correctness** — scoped to the subscription being renewed, bounded by the period being invoiced, inside the advisory lock the renewal already holds |
+| `platform-metering` | **freshness** — keeps the dashboard current between invoices, and is allowed to fall behind |
+
+Both go through one `meterOrganizationVolume`, so there is no way for the two to
+disagree about what counts as volume, and both write the same row keyed on the
+same attempt — so running concurrently is a conflict PostgreSQL resolves rather
+than a double charge. `renewSubscription` calls the flush unconditionally and
+learns nothing about platform billing by doing so: the module decides, and
+returns immediately unless the deployment resells itself.
+
+The residual window is a transaction committing its `completedAt` after the
+flush has already scanned past it — bounded by commit latency rather than by a
+job schedule, and the same read-skew any snapshot aggregation has.
+
+#### Cost
+
+Volume is walked in pages and written with `createMany({ skipDuplicates: true })`,
+so a window holding a thousand payments costs one select and one insert rather
+than three thousand round trips, and enrolment is paged so a platform with a
+hundred thousand merchants does not load a hundred thousand rows to decide what
+to do. `payment_attempts` carries `(organizationId, status, completedAt)` for
+exactly this scan.
+
+`buildVolumeEvents` is pure and takes attempts rather than a query. That is the
+seam: making this event-driven later means feeding the same function attempt ids
+from a queue instead of a scan, writing the same rows under the same key, with
+nothing in the pricing or billing model moving.
+
 Two things are deliberately left out rather than guessed. Volume collected in a
 currency the platform's price is not denominated in is **rejected and logged**,
 never converted — a meter holds one scalar, and this engine has no exchange rate

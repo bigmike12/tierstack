@@ -1,6 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { MAX_UNITS } from "@tierstack/usage";
-import { LOOKBACK_MS, volumeUnits } from "./platform-metering";
+import {
+  buildVolumeEvents,
+  LOOKBACK_MS,
+  platformOrganizationId,
+  volumeUnits,
+  type BuildVolumeEventsContext,
+  type SettledAttempt,
+} from "./platform-metering";
+
+const context: BuildVolumeEventsContext = {
+  platformOrganizationId: "org_platform",
+  customerId: "cus_merchant",
+  sourceOrganizationId: "org_merchant",
+  meterId: "meter_volume",
+  currency: "NGN",
+  now: new Date("2026-09-05T12:00:00Z"),
+};
+
+const attempt = (over: Partial<SettledAttempt> = {}): SettledAttempt => ({
+  id: "pay_1",
+  amount: 800_000_000,
+  currency: "NGN",
+  completedAt: new Date("2026-09-01T10:00:00Z"),
+  ...over,
+});
 
 describe("platform volume metering", () => {
   describe("volumeUnits", () => {
@@ -18,16 +42,6 @@ describe("platform volume metering", () => {
       expect(volumeUnits(1_049, "NGN")).toBe(10); // ₦10.49 → 10
     });
 
-    it("rounds a payment below one major unit away, rather than to a phantom unit", () => {
-      expect(volumeUnits(49, "NGN")).toBe(0);
-      expect(volumeUnits(0, "NGN")).toBe(0);
-    });
-
-    it("keeps a realistic single payment far inside what the column holds", () => {
-      // The largest card payment anyone plausibly takes, in the major unit.
-      expect(volumeUnits(10_000_000_00, "NGN")).toBeLessThan(MAX_UNITS);
-    });
-
     it("shows why a minor-unit meter is the thing to avoid", () => {
       // The same ₦21.5m collection, metered in kobo rather than naira, is past
       // the column. This is the arithmetic behind "meter money in naira".
@@ -37,10 +51,108 @@ describe("platform volume metering", () => {
     });
   });
 
+  describe("buildVolumeEvents", () => {
+    it("keys the event on the payment attempt, which is what makes a replay free", () => {
+      const { rows } = buildVolumeEvents([attempt({ id: "pay_abc" })], context);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.eventId).toBe("pay_abc");
+      expect(rows[0]!.organizationId).toBe("org_platform");
+      expect(rows[0]!.customerId).toBe("cus_merchant");
+      expect(rows[0]!.units).toBe(8_000_000);
+    });
+
+    it("dates the event when the money arrived, not when it was noticed", () => {
+      // A payment that settles at 23:58 on the last day of a period belongs to
+      // that period even when the flush runs after midnight.
+      const settled = new Date("2026-08-31T23:58:00Z");
+      const { rows } = buildVolumeEvents([attempt({ completedAt: settled })], context);
+      expect(rows[0]!.timestamp).toEqual(settled);
+    });
+
+    it("falls back to now only when the attempt carries no completion time", () => {
+      const { rows } = buildVolumeEvents([attempt({ completedAt: null })], context);
+      expect(rows[0]!.timestamp).toEqual(context.now);
+    });
+
+    it("names the organization the volume came from, so an event can be traced back", () => {
+      const { rows } = buildVolumeEvents([attempt()], context);
+      expect(rows[0]!.metadata).toMatchObject({
+        source: "platform_volume",
+        sourceOrganizationId: "org_merchant",
+        amountMinor: 800_000_000,
+      });
+    });
+
+    it("rejects volume in another currency rather than adding it to the wrong total", () => {
+      // A meter holds one scalar, and this engine has no exchange rate that
+      // belongs in an invoice.
+      const { rows, rejected } = buildVolumeEvents(
+        [attempt({ id: "pay_usd", currency: "USD" })],
+        context
+      );
+      expect(rows).toHaveLength(0);
+      expect(rejected).toEqual([
+        { attemptId: "pay_usd", reason: "collected in USD, metered in NGN" },
+      ]);
+    });
+
+    it("rejects a single payment too large for the column instead of overflowing it", () => {
+      const { rows, rejected } = buildVolumeEvents(
+        [attempt({ id: "pay_huge", amount: (MAX_UNITS + 1) * 100 })],
+        context
+      );
+      expect(rows).toHaveLength(0);
+      expect(rejected[0]).toMatchObject({ attemptId: "pay_huge" });
+    });
+
+    it("drops a payment below one major unit rather than writing a zero", () => {
+      // A row that can never change a total does not belong in the highest
+      // volume table in the schema.
+      const { rows, rejected } = buildVolumeEvents([attempt({ amount: 49 })], context);
+      expect(rows).toHaveLength(0);
+      expect(rejected).toHaveLength(0);
+    });
+
+    it("mints a distinct id per row while keeping the idempotency key stable", () => {
+      const first = buildVolumeEvents([attempt()], context).rows[0]!;
+      const second = buildVolumeEvents([attempt()], context).rows[0]!;
+      // The primary key differs on every build; the unique constraint is on
+      // eventId, which does not — so a re-run collides where it should.
+      expect(first.id).not.toBe(second.id);
+      expect(first.eventId).toBe(second.eventId);
+    });
+
+    it("partitions a mixed batch without letting one bad attempt drop a good one", () => {
+      const { rows, rejected } = buildVolumeEvents(
+        [
+          attempt({ id: "pay_ok_1" }),
+          attempt({ id: "pay_usd", currency: "USD" }),
+          attempt({ id: "pay_ok_2", amount: 100_000 }),
+          attempt({ id: "pay_dust", amount: 5 }),
+        ],
+        context
+      );
+      expect(rows.map((r) => r.eventId)).toEqual(["pay_ok_1", "pay_ok_2"]);
+      expect(rejected.map((r) => r.attemptId)).toEqual(["pay_usd"]);
+    });
+  });
+
+  describe("platformOrganizationId", () => {
+    it("is unset on an ordinary deployment, which is what makes all of this inert", () => {
+      expect(platformOrganizationId({})).toBeNull();
+      expect(platformOrganizationId({ PLATFORM_ORGANIZATION_ID: "" })).toBeNull();
+    });
+
+    it("names the organization that bills the others when a deployment resells itself", () => {
+      expect(platformOrganizationId({ PLATFORM_ORGANIZATION_ID: "org_p" })).toBe("org_p");
+    });
+  });
+
   it("looks back far enough to absorb a worker outage without an operator", () => {
-    // The window is what replaces a watermark: a pass re-reads a day of settled
-    // attempts and writes only the missing ones, so downtime shorter than this
-    // heals itself on the next tick.
+    // The window is what replaces a watermark on the scheduled pass: it re-reads
+    // a day of settled attempts and writes only the missing ones, so downtime
+    // shorter than this heals itself on the next tick. Billing correctness does
+    // not depend on it either way — the renewal flush is what guarantees that.
     expect(LOOKBACK_MS).toBe(86_400_000);
   });
 });
