@@ -24,6 +24,24 @@ const MODELS = [
   },
 ];
 
+/**
+ * What one billing period is called, for the cap's label. The cap is stored per
+ * period, so an annual price must say "per year" — a merchant who reads "per
+ * month" on an annual price and types 50,000 has capped a year at that, not a
+ * month, and would not find out until the first invoice.
+ */
+const CAP_PERIODS: Record<string, string> = {
+  DAILY: "day",
+  WEEKLY: "week",
+  BI_WEEKLY: "2 weeks",
+  MONTHLY: "month",
+  BI_MONTHLY: "2 months",
+  QUARTERLY: "quarter",
+  SEMI_ANNUALLY: "6 months",
+  ANNUALLY: "year",
+  CUSTOM_DAYS: "billing period",
+};
+
 const INTERVALS = [
   "DAILY",
   "WEEKLY",
@@ -75,6 +93,29 @@ function majorAmount(amount: number | null | undefined): string {
   const whole = Math.trunc(amount / factor);
   const fraction = Math.abs(amount % factor);
   return fraction === 0 ? String(whole) : `${whole}.${String(fraction).padStart(decimals, "0")}`;
+}
+
+/** Whether a price already carries the percentage display hint. */
+function readsAsPercentage(metadata: Record<string, unknown> | null | undefined): boolean {
+  const hint = metadata?.usageDisplay as { kind?: unknown } | undefined;
+  return hint?.kind === "PERCENTAGE";
+}
+
+/**
+ * The rate a block pair works out to, for the readout under the checkbox.
+ *
+ * Presentation only — the server recomputes nothing from this, and the invoice
+ * derives its own percentage from the stored minor-unit values. It exists so a
+ * merchant who means 2.5% and types the wrong pair sees that before saving,
+ * rather than on the first invoice of the month.
+ */
+function derivePercentage(rate: string, blockSize: string): string | null {
+  const amount = Number.parseFloat(rate);
+  const size = Number.parseFloat(blockSize);
+  if (!Number.isFinite(amount) || !Number.isFinite(size) || size <= 0 || amount <= 0) return null;
+  const percent = (amount / size) * 100;
+  if (percent > 100) return null;
+  return `${Number(percent.toFixed(4))}%`;
 }
 
 /**
@@ -143,6 +184,29 @@ function PriceForm({
   const metered = model === "USAGE_METERED" || model === "HYBRID";
   const hasRecurringAmount = model !== "USAGE_METERED";
   const modelHint = MODELS.find((entry) => entry.value === model)?.hint;
+
+  // A percentage fee is an ordinary block price whose meter counts money: at
+  // 2.5% the rate is 1 per 40 units of volume. Only the invoice wording differs,
+  // so this is a display flag rather than a fifth pricing model — but the flag
+  // has to be set somewhere, and a merchant should not have to PATCH metadata
+  // to get an invoice that says "2.5%" instead of "85,000 × 40".
+  const [percentage, setPercentage] = useState(
+    state.values?.percentageFee === "on" || readsAsPercentage(price?.metadata)
+  );
+  const [rate, setRate] = useState(state.values?.usageAmount ?? majorAmount(price?.usageUnitAmount));
+  const [blockSize, setBlockSize] = useState(
+    state.values?.usageUnitSize ?? (price?.usageUnitSize?.toString() ?? "1")
+  );
+  const derivedRate = percentage ? derivePercentage(rate, blockSize) : null;
+
+  // The cap covers one billing period. On a monthly price that is what anyone
+  // means by "capped at ₦50,000 a month"; on an annual one it is emphatically
+  // not, so the label names the interval on screen rather than leaving the
+  // merchant to assume and be wrong by a factor of twelve.
+  const [capped, setCapped] = useState(
+    state.values?.usageCapped === "on" || (price?.usageMaxAmount ?? null) !== null
+  );
+  const capPeriod = CAP_PERIODS[interval] ?? "period";
 
   return (
     <form action={action} className="space-y-5">
@@ -295,7 +359,8 @@ function PriceForm({
                     inputMode="decimal"
                     pattern="[0-9]+([.][0-9]+)?"
                     placeholder="50"
-                    defaultValue={state.values?.usageAmount ?? majorAmount(price?.usageUnitAmount)}
+                    value={rate}
+                    onChange={(event) => setRate(event.target.value)}
                   />
                 </Field>
               </div>
@@ -310,7 +375,8 @@ function PriceForm({
                     type="number"
                     min={1}
                     placeholder="1000"
-                    defaultValue={state.values?.usageUnitSize ?? (price?.usageUnitSize?.toString() ?? "1")}
+                    value={blockSize}
+                    onChange={(event) => setBlockSize(event.target.value)}
                   />
                 </Field>
                 <Field label="Included units" hint="The allowance before overage starts. Blank means none.">
@@ -323,9 +389,89 @@ function PriceForm({
                   />
                 </Field>
               </div>
+
+              <div className="space-y-2 border-t border-border pt-4">
+                <label className="flex items-start gap-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    name="percentageFee"
+                    className="mt-0.5 h-4 w-4 rounded border-border accent-foreground"
+                    checked={percentage}
+                    onChange={(event) => setPercentage(event.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">This meter counts money</span>
+                    <span className="block text-xs text-muted-foreground">
+                      For percentage fees — a meter recording payment volume rather than a number of
+                      things. Invoices read &ldquo;2.5% of ₦3,400,000.00&rdquo; instead of the block
+                      arithmetic. It changes the wording only; the amount charged is the same either way.
+                    </span>
+                  </span>
+                </label>
+                {percentage ? (
+                  <p className="text-xs text-muted-foreground">
+                    {derivedRate ? (
+                      <>
+                        Bills as <strong className="text-foreground">{derivedRate}</strong> of metered
+                        volume. Record volume in {price?.currency ?? "major"} units, not minor ones — the
+                        units column is a 32-bit integer, so a meter counting kobo overflows on a single
+                        large payment.
+                      </>
+                    ) : (
+                      "Set a rate and a block size that work out to the percentage you mean — 1 per 40 is 2.5%."
+                    )}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="space-y-3 border-t border-border pt-4">
+                <label className="flex items-start gap-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    name="usageCapped"
+                    className="mt-0.5 h-4 w-4 rounded border-border accent-foreground"
+                    checked={capped}
+                    onChange={(event) => setCapped(event.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Cap the metered charge</span>
+                    <span className="block text-xs text-muted-foreground">
+                      A ceiling on what consumption can cost in one billing period. Usage keeps being
+                      recorded past it — only the charge stops rising.
+                    </span>
+                  </span>
+                </label>
+                {capped ? (
+                  <Field
+                    label={`Maximum per ${capPeriod}`}
+                    hint={
+                      <>
+                        In major units, like every other amount on this form. This price bills{" "}
+                        {(CAP_PERIODS[interval] ?? "per period") === "billing period"
+                          ? "on a custom interval"
+                          : `every ${capPeriod}`}
+                        , so the cap covers that whole window — not a calendar month.
+                      </>
+                    }
+                  >
+                    <Input
+                      name="usageMaxAmount"
+                      inputMode="decimal"
+                      pattern="[0-9]+([.][0-9]+)?"
+                      placeholder="50000"
+                      defaultValue={state.values?.usageMaxAmount ?? majorAmount(price?.usageMaxAmount)}
+                    />
+                  </Field>
+                ) : null}
+              </div>
             </>
           )}
         </fieldset>
+      ) : null}
+      {/* Metadata is replaced wholesale on update, so the keys the form does not
+          manage ride along and come back unchanged. */}
+      {editing ? (
+        <input type="hidden" name="existingMetadata" value={JSON.stringify(price?.metadata ?? {})} />
       ) : null}
 
       <div className="flex items-center gap-3">

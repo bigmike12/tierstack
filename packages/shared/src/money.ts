@@ -225,6 +225,39 @@ export function formatMoney(a: Money, locale = "en-US"): string {
   }).format(value);
 }
 
+/**
+ * Money as a customer expects to see it: ₦5,000.00, not NGN 5,000.00.
+ *
+ * `formatMoney` above renders an ISO code, which is right for a dashboard where
+ * several currencies sit in one table. Someone reading a receipt or an invoice
+ * line for their own subscription knows what currency they pay in and wants the
+ * symbol they see everywhere else. Integer division and a padded remainder, so
+ * the presentation layer does not become the one place a float touches an
+ * amount.
+ *
+ * The symbols come from CURRENCIES rather than from Intl deliberately. Intl
+ * only knows the symbols its locale knows — under "en-NG" it renders NGN and
+ * USD with symbols but still prints KES, GHS and ZAR as ISO codes, which would
+ * make a multi-currency merchant's invoices inconsistent with each other.
+ */
+export function formatCustomerMoney(value: Money): string {
+  const currency = value.currency as CurrencyCode;
+  const decimals: number = CURRENCIES[currency]?.minorUnits ?? 2;
+  const symbol = CURRENCIES[currency]?.symbol ?? `${value.currency} `;
+  const factor = 10 ** decimals;
+
+  const negative = value.amount < 0;
+  const absolute = Math.abs(value.amount);
+  const whole = Math.trunc(absolute / factor);
+  const fraction = absolute % factor;
+
+  const grouped = whole.toLocaleString("en-US");
+  const rendered =
+    decimals === 0 ? grouped : `${grouped}.${String(fraction).padStart(decimals, "0")}`;
+
+  return `${negative ? "-" : ""}${symbol}${rendered}`;
+}
+
 /** Parse a decimal string such as "10000.50" into minor units. */
 export function parseMoney(decimalString: string, currency: string): Money {
   const code = assertCurrency(currency);

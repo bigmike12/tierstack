@@ -1,7 +1,7 @@
 import type { PrismaClient, TransactionClient } from "@tierstack/database";
 import { BillingError, newId } from "@tierstack/shared";
 import { assertAggregation, type UsageAggregation } from "./aggregation";
-import { billableBlocks, computeQuota, type QuotaResult } from "./quota";
+import { billableBlocks, cappedFee, computeQuota, type QuotaResult } from "./quota";
 
 export interface UsagePeriod {
   start: Date;
@@ -150,6 +150,8 @@ export interface MeteredPrice {
   usageUnitAmount: number | null;
   usageUnitSize: number | null;
   includedUnits: number | null;
+  /** Ceiling on the charge for one billing period, in minor units. */
+  usageMaxAmount?: number | null;
 }
 
 export interface UsageSnapshot extends QuotaResult {
@@ -161,8 +163,17 @@ export interface UsageSnapshot extends QuotaResult {
   period: UsagePeriod;
   /** Priced blocks the overage represents, given the price's block size. */
   overageBlocks: number;
-  /** Overage cost in minor units, or null when the price has no usage rate. */
+  /** What the overage costs after any cap, or null when the price has no rate. */
   overageAmount: number | null;
+  /**
+   * What it would have cost uncapped. Equal to `overageAmount` unless the cap
+   * bit — the dashboard shows the difference, and the invoice line says so.
+   */
+  uncappedOverageAmount: number | null;
+  /** The price's ceiling for this period, in minor units. Null means uncapped. */
+  capAmount: number | null;
+  /** True when the cap actually reduced the charge, not merely that one is set. */
+  capApplied: boolean;
 }
 
 /**
@@ -196,6 +207,14 @@ export async function getUsageSnapshot(
   const quota = computeQuota({ used, includedUnits: params.price?.includedUnits });
   const blocks = billableBlocks(quota.overage, params.price?.usageUnitSize);
   const rate = params.price?.usageUnitAmount ?? null;
+  const cap = params.price?.usageMaxAmount ?? null;
+
+  // The block count stays what was actually consumed; only the money is
+  // clamped. A capped period should still be able to tell you how much volume
+  // went through it, which is the first thing asked when a merchant wonders
+  // whether the cap is set right.
+  const uncapped = rate === null ? null : blocks * rate;
+  const charged = uncapped === null ? null : cappedFee(uncapped, cap);
 
   return {
     ...quota,
@@ -206,7 +225,10 @@ export async function getUsageSnapshot(
     aggregation,
     period: params.period,
     overageBlocks: blocks,
-    overageAmount: rate === null ? null : blocks * rate,
+    overageAmount: charged,
+    uncappedOverageAmount: uncapped,
+    capAmount: cap,
+    capApplied: uncapped !== null && charged !== null && charged < uncapped,
   };
 }
 
@@ -230,7 +252,13 @@ export async function listCustomerUsage(
         usageMeterId: meter.id,
         subscriptions: { some: { customerId: params.customerId } },
       },
-      select: { usageMeterId: true, usageUnitAmount: true, usageUnitSize: true, includedUnits: true },
+      select: {
+        usageMeterId: true,
+        usageUnitAmount: true,
+        usageUnitSize: true,
+        includedUnits: true,
+        usageMaxAmount: true,
+      },
     });
     const eventCount = await prisma.usageEvent.count({
       where: {

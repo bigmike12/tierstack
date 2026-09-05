@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { BillingError, parseMoney } from "@tierstack/shared";
+import { BillingError, assertCurrency, minorUnits, parseMoney } from "@tierstack/shared";
 import { ApiError, apiFetch } from "@/lib/api";
 
 export interface CatalogueState {
@@ -10,6 +10,44 @@ export interface CatalogueState {
   message?: string;
   /** Echoed back so a rejected form does not lose what was typed. */
   values?: Record<string, string>;
+}
+
+/**
+ * The metadata a percentage price carries, merged onto whatever was already there.
+ *
+ * `unitScale` says how many minor units one metered unit is worth, which is what
+ * lets the invoice turn a block ratio back into "2.5% of ₦3,400,000.00". The
+ * dashboard only ever offers the major-unit form: `UsageEvent.units` is a 32-bit
+ * column, so a meter recording kobo overflows on a single payment above ₦21.5m.
+ * A minor-unit meter is still reachable through the API for anyone who wants it.
+ *
+ * Passing the existing metadata through rather than replacing it matters because
+ * the API writes the object wholesale — keys set by the API and never shown in
+ * this form would otherwise disappear the first time someone renamed a price.
+ */
+function withUsageDisplay(
+  existing: string,
+  percentage: boolean,
+  currency: string
+): Record<string, unknown> {
+  let base: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = existing ? JSON.parse(existing) : {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      base = { ...(parsed as Record<string, unknown>) };
+    }
+  } catch {
+    // A hidden field that did not survive the round trip is not worth failing a
+    // price edit over. Worst case the merchant loses metadata they cannot see
+    // in this form anyway, which is the same outcome as before it was carried.
+  }
+
+  if (percentage) {
+    base.usageDisplay = { kind: "PERCENTAGE", unitScale: 10 ** minorUnits(assertCurrency(currency)) };
+  } else {
+    delete base.usageDisplay;
+  }
+  return base;
 }
 
 function failure(error: unknown, values?: Record<string, string>): CatalogueState {
@@ -137,6 +175,9 @@ export async function createPrice(_prev: CatalogueState, formData: FormData): Pr
     usageAmount: text(formData, "usageAmount"),
     usageUnitSize: text(formData, "usageUnitSize"),
     includedUnits: text(formData, "includedUnits"),
+    percentageFee: text(formData, "percentageFee"),
+    usageCapped: text(formData, "usageCapped"),
+    usageMaxAmount: text(formData, "usageMaxAmount"),
   };
 
   if (!values.code) return { error: "A price needs a code.", values };
@@ -175,6 +216,15 @@ export async function createPrice(_prev: CatalogueState, formData: FormData): Pr
       body.usageUnitAmount = parseMoney(values.usageAmount, currency).amount;
       body.usageUnitSize = values.usageUnitSize ? Number.parseInt(values.usageUnitSize, 10) : 1;
       if (values.includedUnits) body.includedUnits = Number.parseInt(values.includedUnits, 10);
+      if (values.percentageFee === "on") {
+        body.metadata = withUsageDisplay("{}", true, currency);
+      }
+      if (values.usageCapped === "on") {
+        if (!values.usageMaxAmount) {
+          return { error: "A capped price needs a maximum, or the cap does nothing.", values };
+        }
+        body.usageMaxAmount = parseMoney(values.usageMaxAmount, currency).amount;
+      }
     }
   } catch (error) {
     return failure(error, values);
@@ -210,6 +260,9 @@ export async function updatePrice(_prev: CatalogueState, formData: FormData): Pr
     usageAmount: text(formData, "usageAmount"),
     usageUnitSize: text(formData, "usageUnitSize"),
     includedUnits: text(formData, "includedUnits"),
+    percentageFee: text(formData, "percentageFee"),
+    usageCapped: text(formData, "usageCapped"),
+    usageMaxAmount: text(formData, "usageMaxAmount"),
   };
   const metered = model === "USAGE_METERED" || model === "HYBRID";
   const body: Record<string, unknown> = {
@@ -236,12 +289,30 @@ export async function updatePrice(_prev: CatalogueState, formData: FormData): Pr
       body.usageUnitAmount = parseMoney(values.usageAmount, currency).amount;
       body.usageUnitSize = values.usageUnitSize ? Number.parseInt(values.usageUnitSize, 10) : 1;
       body.includedUnits = values.includedUnits ? Number.parseInt(values.includedUnits, 10) : null;
+      if (values.usageCapped === "on") {
+        if (!values.usageMaxAmount) {
+          return { error: "A capped price needs a maximum, or the cap does nothing.", values };
+        }
+        body.usageMaxAmount = parseMoney(values.usageMaxAmount, currency).amount;
+      } else {
+        body.usageMaxAmount = null;
+      }
     } else {
       body.usageMeterCode = null;
       body.usageUnitAmount = null;
       body.usageUnitSize = null;
       body.includedUnits = null;
+      body.usageMaxAmount = null;
     }
+
+    // Always sent, so that clearing the checkbox — or switching away from a
+    // metered model — actually removes the hint rather than leaving a price
+    // that bills as a flat fee still describing itself as a percentage.
+    body.metadata = withUsageDisplay(
+      text(formData, "existingMetadata"),
+      metered && values.percentageFee === "on",
+      currency
+    );
   } catch (error) {
     return failure(error, values);
   }

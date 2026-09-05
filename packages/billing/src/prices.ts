@@ -18,6 +18,9 @@ export const ECONOMIC_FIELDS = [
   "usageUnitAmount",
   "usageUnitSize",
   "includedUnits",
+  // A ceiling is part of what someone agreed to pay, so raising or removing it
+  // on a price with live subscribers versions rather than edits in place.
+  "usageMaxAmount",
 ] as const;
 
 /**
@@ -42,6 +45,7 @@ export interface PriceEconomics {
   usageUnitAmount: number | null;
   usageUnitSize: number | null;
   includedUnits: number | null;
+  usageMaxAmount: number | null;
 }
 
 /**
@@ -92,6 +96,7 @@ export interface UpdatePriceParams {
   usageUnitAmount?: number | null;
   usageUnitSize?: number | null;
   includedUnits?: number | null;
+  usageMaxAmount?: number | null;
 }
 
 export interface UpdatePriceResult {
@@ -210,6 +215,8 @@ export async function updatePrice(
           economics.usageUnitSize !== undefined ? economics.usageUnitSize : price.usageUnitSize,
         includedUnits:
           economics.includedUnits !== undefined ? economics.includedUnits : price.includedUnits,
+        usageMaxAmount:
+          economics.usageMaxAmount !== undefined ? economics.usageMaxAmount : price.usageMaxAmount,
         trialDays: params.trialDays !== undefined ? params.trialDays : price.trialDays,
         active: params.active ?? true,
         metadata: (params.metadata ?? (price.metadata as never)) as never,

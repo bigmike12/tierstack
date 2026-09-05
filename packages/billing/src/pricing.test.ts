@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { formatCustomerMoney, money } from "@tierstack/shared";
 import {
   assertBillablePriceModel,
   buildRecurringLines,
   buildUsageLines,
   intervalFromRequest,
+  parseUsageDisplay,
   recurringAmount,
   sumLines,
   type PriceSnapshot,
@@ -23,6 +25,8 @@ const seat: PriceSnapshot = { ...flat, id: "price_2", code: "team_seat_ngn", mod
 
 const periodStart = new Date("2026-08-01T00:00:00Z");
 const periodEnd = new Date("2026-09-01T00:00:00Z");
+
+const ngn = (minor: number) => formatCustomerMoney(money(minor, "NGN"));
 
 describe("pricing", () => {
   it("prices a flat recurring plan", () => {
@@ -144,6 +148,177 @@ describe("pricing", () => {
           periodEnd,
         })
       ).toEqual([]);
+    });
+
+    // 2.5% of payment volume, metered in naira: NGN 1 per 40 naira processed.
+    const percentage: PriceSnapshot = {
+      ...flat,
+      model: "USAGE_METERED",
+      unitAmount: null,
+      usageMeterId: "meter_2",
+      usageMeterCode: "PAYMENT_VOLUME",
+      usageUnitAmount: 100,
+      usageUnitSize: 40,
+      includedUnits: null,
+      usageDisplay: { kind: "PERCENTAGE", unitScale: 100 },
+    };
+
+    it("renders a percentage fee as a rate on money, not as blocks", () => {
+      const lines = buildUsageLines({
+        price: percentage,
+        meterName: "Payment volume",
+        unitLabel: "naira",
+        used: 3_400_000,
+        included: 0,
+        overage: 3_400_000,
+        blocks: 85_000,
+        periodStart,
+        periodEnd,
+      });
+      const overage = lines.find((line) => line.type === "OVERAGE");
+      expect(overage?.description).toBe(
+        `Payment volume — 2.5% of ${ngn(340_000_000)} (2026-08-01 – 2026-09-01)`
+      );
+      // The rate quoted in the description is the one that was charged.
+      expect(overage?.amount).toBe(8_500_000);
+      expect(overage?.amount).toBe(3_400_000 * 100 * 0.025);
+    });
+
+    it("leaves the block arithmetic untouched when it only changes the wording", () => {
+      const [asBlocks] = buildUsageLines({
+        price: { ...percentage, usageDisplay: null },
+        meterName: "Payment volume",
+        used: 3_400_000,
+        included: 0,
+        overage: 3_400_000,
+        blocks: 85_000,
+        periodStart,
+        periodEnd,
+      });
+      const [asPercentage] = buildUsageLines({
+        price: percentage,
+        meterName: "Payment volume",
+        used: 3_400_000,
+        included: 0,
+        overage: 3_400_000,
+        blocks: 85_000,
+        periodStart,
+        periodEnd,
+      });
+      expect(asPercentage?.amount).toBe(asBlocks?.amount);
+      expect(asPercentage?.quantity).toBe(asBlocks?.quantity);
+      expect(asPercentage?.unitAmount).toBe(asBlocks?.unitAmount);
+      expect(asPercentage?.description).not.toBe(asBlocks?.description);
+    });
+
+    it("quotes the rate against the volume it was applied to, above an allowance", () => {
+      const lines = buildUsageLines({
+        price: { ...percentage, includedUnits: 500_000 },
+        meterName: "Payment volume",
+        used: 3_400_000,
+        included: 500_000,
+        overage: 2_900_000,
+        blocks: 72_500,
+        periodStart,
+        periodEnd,
+      });
+      expect(lines.find((line) => line.type === "USAGE")?.description).toContain(
+        `${ngn(340_000_000)} processed, ${ngn(50_000_000)} included`
+      );
+      const overage = lines.find((line) => line.type === "OVERAGE");
+      expect(overage?.description).toContain(
+        `2.5% of ${ngn(290_000_000)} above the ${ngn(50_000_000)} included`
+      );
+      expect(overage?.amount).toBe(7_250_000);
+    });
+
+    it("trims a whole-number rate and keeps a fractional one", () => {
+      const describe1 = (unitAmount: number, unitSize: number) =>
+        buildUsageLines({
+          price: { ...percentage, usageUnitAmount: unitAmount, usageUnitSize: unitSize },
+          meterName: "Payment volume",
+          used: 1_000_000,
+          included: 0,
+          overage: 1_000_000,
+          blocks: 1,
+          periodStart,
+          periodEnd,
+        })[0]?.description ?? "";
+      expect(describe1(100, 50)).toContain("2% of");
+      expect(describe1(195, 100)).toContain("1.95% of");
+    });
+
+    describe("fee cap", () => {
+      // 2.5% of ₦8,000,000 is ₦200,000, held down to ₦50,000.
+      const uncapped = {
+        price: percentage,
+        meterName: "Payment volume",
+        used: 8_000_000,
+        included: 0,
+        overage: 8_000_000,
+        blocks: 200_000,
+        periodStart,
+        periodEnd,
+      };
+
+      it("charges the ceiling once the fee passes it", () => {
+        const [line] = buildUsageLines({
+          ...uncapped,
+          price: { ...percentage, usageMaxAmount: 5_000_000 },
+        });
+        expect(line?.amount).toBe(5_000_000);
+        expect(line?.description).toContain(`capped at ${ngn(5_000_000)}, from ${ngn(20_000_000)}`);
+      });
+
+      it("keeps quantity × unitAmount equal to amount on a capped line", () => {
+        const [line] = buildUsageLines({
+          ...uncapped,
+          price: { ...percentage, usageMaxAmount: 5_000_000 },
+        });
+        expect((line?.quantity ?? 0) * (line?.unitAmount ?? 0)).toBe(line?.amount);
+        // The blocks actually consumed survive where anything reconciling
+        // against the meter would look for them.
+        expect(line?.metadata).toMatchObject({ blocks: 200_000, uncappedAmount: 20_000_000 });
+      });
+
+      it("leaves a fee below the ceiling completely alone", () => {
+        const [line] = buildUsageLines({
+          ...uncapped,
+          price: { ...percentage, usageMaxAmount: 50_000_000 },
+        });
+        expect(line?.amount).toBe(20_000_000);
+        expect(line?.quantity).toBe(200_000);
+        expect(line?.description).not.toContain("capped");
+        expect(line?.metadata).not.toHaveProperty("cap");
+      });
+
+      it("caps a block price too, not only a percentage one", () => {
+        const [line] = buildUsageLines({
+          price: { ...hybrid, usageMaxAmount: 100_000 },
+          meterName: "AI tokens",
+          unitLabel: "tokens",
+          used: 152_300,
+          included: 100_000,
+          overage: 52_300,
+          blocks: 53,
+          periodStart,
+          periodEnd,
+        }).filter((line) => line.type === "OVERAGE");
+        // 53 × ₦50 is ₦2,650, held to ₦1,000.
+        expect(line?.amount).toBe(100_000);
+        expect(line?.description).toContain("billed as 53 × 1,000");
+        expect(line?.description).toContain("capped at");
+      });
+    });
+
+    it("ignores a malformed display hint rather than failing the invoice", () => {
+      for (const bad of [null, undefined, {}, "PERCENTAGE", { kind: "PERCENTAGE" }, { kind: "PERCENTAGE", unitScale: 0 }, { kind: "PERCENTAGE", unitScale: 1.5 }]) {
+        expect(parseUsageDisplay(bad)).toBeNull();
+      }
+      expect(parseUsageDisplay({ kind: "PERCENTAGE", unitScale: 100 })).toEqual({
+        kind: "PERCENTAGE",
+        unitScale: 100,
+      });
     });
   });
 

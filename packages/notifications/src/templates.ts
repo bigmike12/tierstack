@@ -1,4 +1,4 @@
-import { CURRENCIES, type CurrencyCode, type Money } from "@tierstack/shared";
+import { formatCustomerMoney, type Money } from "@tierstack/shared";
 
 /**
  * The words a customer actually reads.
@@ -15,33 +15,10 @@ import { CURRENCIES, type CurrencyCode, type Money } from "@tierstack/shared";
  */
 
 
-/**
- * Money as a customer expects to see it: ₦5,000.00, not NGN 5,000.00.
- *
- * `formatMoney` in the shared package renders an ISO code, which is right for a
- * dashboard where several currencies sit in one table. A customer reading a
- * receipt for their own subscription knows what currency they pay in and wants
- * the symbol they see everywhere else. Integer division and a padded remainder,
- * so the presentation layer does not become the one place a float touches an
- * amount.
- */
-export function formatCustomerMoney(value: Money): string {
-  const currency = value.currency as CurrencyCode;
-  const decimals: number = CURRENCIES[currency]?.minorUnits ?? 2;
-  const symbol = CURRENCIES[currency]?.symbol ?? `${value.currency} `;
-  const factor = 10 ** decimals;
-
-  const negative = value.amount < 0;
-  const absolute = Math.abs(value.amount);
-  const whole = Math.trunc(absolute / factor);
-  const fraction = absolute % factor;
-
-  const grouped = whole.toLocaleString("en-US");
-  const rendered =
-    decimals === 0 ? grouped : `${grouped}.${String(fraction).padStart(decimals, "0")}`;
-
-  return `${negative ? "-" : ""}${symbol}${rendered}`;
-}
+// Moved to @tierstack/shared once invoice lines needed it too — an invoice line
+// description is customer-facing text for the same reason an email body is.
+// Re-exported here so the templates and their tests keep their existing import.
+export { formatCustomerMoney };
 
 export interface TemplateContext {
   /** The merchant's name, not the platform's. Customers bought from them. */

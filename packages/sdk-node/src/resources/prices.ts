@@ -29,6 +29,8 @@ export interface Price {
   usageUnitAmount: number | null;
   usageUnitSize: number;
   includedUnits: number | null;
+  /** Ceiling on the metered charge for one billing period, in minor units. */
+  usageMaxAmount: number | null;
   trialDays: number | null;
   active: boolean;
   version: number;
@@ -54,6 +56,7 @@ export interface CreatePriceParams {
   usageUnitAmount?: number;
   usageUnitSize?: number;
   includedUnits?: number;
+  usageMaxAmount?: number;
   trialDays?: number;
   active?: boolean;
   metadata?: Record<string, unknown>;

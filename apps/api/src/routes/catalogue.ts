@@ -42,6 +42,7 @@ const priceSchema = z
     usageUnitAmount: z.number().int().min(0).optional(),
     usageUnitSize: z.number().int().min(1).optional(),
     includedUnits: z.number().int().min(0).optional(),
+    usageMaxAmount: z.number().int().min(0).optional(),
     trialDays: z.number().int().min(0).max(365).optional(),
     active: z.boolean().default(true),
     metadata: z.record(z.unknown()).default({}),
@@ -78,10 +79,28 @@ const priceUpdateSchema = z.object({
   usageUnitAmount: z.number().int().min(0).nullable().optional(),
   usageUnitSize: z.number().int().min(1).nullable().optional(),
   includedUnits: z.number().int().min(0).nullable().optional(),
+  usageMaxAmount: z.number().int().min(0).nullable().optional(),
   trialDays: z.number().int().min(0).max(365).nullable().optional(),
   active: z.boolean().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
+
+/**
+ * A ceiling on a charge that does not exist is a setting nobody can act on: it
+ * would sit on the price looking like a protection and never fire. Rejecting it
+ * here means the only way to see `usageMaxAmount` on a price is for it to mean
+ * something.
+ */
+function assertCapIsBillable(model: string, cap: number | null | undefined): void {
+  if (cap === null || cap === undefined) return;
+  if (model !== "USAGE_METERED" && model !== "HYBRID") {
+    throw new BillingError(
+      "INVALID_REQUEST",
+      `usageMaxAmount caps a metered charge, but this price uses the ${model} model, which has none. ` +
+        "Remove the cap, or use USAGE_METERED or HYBRID."
+    );
+  }
+}
 
 export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClient): void {
   // -- Plans -----------------------------------------------------------------
@@ -261,6 +280,8 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
       usageMeterId = meter.id;
     }
 
+    assertCapIsBillable(body.model, body.usageMaxAmount ?? null);
+
     const price = await prisma.price.create({
       data: {
         id: newId("price"),
@@ -277,6 +298,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
         usageUnitAmount: body.usageUnitAmount ?? null,
         usageUnitSize: body.usageUnitSize ?? 1,
         includedUnits: body.includedUnits ?? null,
+        usageMaxAmount: body.usageMaxAmount ?? null,
         trialDays: body.trialDays ?? null,
         active: body.active,
         metadata: body.metadata as never,
@@ -378,6 +400,10 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
     if ((model === "USAGE_METERED" || model === "HYBRID") && usageUnitAmount === null) {
       throw new BillingError("INVALID_REQUEST", "A metered price needs a rate per block.");
     }
+    assertCapIsBillable(
+      model,
+      body.usageMaxAmount === undefined ? price.usageMaxAmount : body.usageMaxAmount
+    );
 
     const interval = body.interval ? intervalFromRequest(body.interval, body.intervalDays) : undefined;
 
@@ -401,6 +427,7 @@ export function registerCatalogueRoutes(app: FastifyInstance, prisma: PrismaClie
       usageUnitAmount: body.usageUnitAmount,
       usageUnitSize: body.usageUnitSize,
       includedUnits: body.includedUnits,
+      usageMaxAmount: body.usageMaxAmount,
     });
 
     await notifyEntitlementChange(organizationId, null);
