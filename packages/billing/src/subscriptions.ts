@@ -17,6 +17,7 @@ import {
   assertBillablePriceModel,
   buildRecurringLines,
   buildUsageLines,
+  parseUsageDisplay,
   priceInterval,
   recurringAmount,
   type ComputedLine,
@@ -371,6 +372,7 @@ export async function renewSubscription(
           usageUnitAmount: snapshot.usageUnitAmount ?? null,
           usageUnitSize: snapshot.usageUnitSize ?? null,
           includedUnits: snapshot.includedUnits ?? null,
+          usageMaxAmount: snapshot.usageMaxAmount ?? null,
         },
       });
 
@@ -886,7 +888,9 @@ export function toPriceSnapshot(price: {
   usageUnitAmount?: number | null;
   usageUnitSize?: number | null;
   includedUnits?: number | null;
+  usageMaxAmount?: number | null;
   trialDays?: number | null;
+  metadata?: unknown;
 }): PriceSnapshot {
   return {
     id: price.id,
@@ -902,7 +906,14 @@ export function toPriceSnapshot(price: {
     usageUnitAmount: price.usageUnitAmount ?? null,
     usageUnitSize: price.usageUnitSize ?? null,
     includedUnits: price.includedUnits ?? null,
+    usageMaxAmount: price.usageMaxAmount ?? null,
     trialDays: price.trialDays ?? null,
+    // Display-only, and it lives in metadata rather than a column because it
+    // changes no amount: a price that loses this hint bills identically and
+    // only reads worse. If a cap ever lands as a real column, this moves.
+    usageDisplay: parseUsageDisplay(
+      (price.metadata as { usageDisplay?: unknown } | null | undefined)?.usageDisplay
+    ),
   };
 }
 

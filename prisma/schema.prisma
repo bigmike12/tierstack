@@ -330,6 +330,11 @@ model Price {
   usageUnitSize  Int?         @default(1)
   /// Units bundled into the base amount before overage begins.
   includedUnits  Int?
+  /// Ceiling on the metered charge for one billing period, in minor units.
+  /// Null means uncapped. This is per period, not per calendar month: on a
+  /// monthly price the two are the same, and on any other interval the period
+  /// is the only reading that does not silently multiply the merchant's intent.
+  usageMaxAmount Int?
 
   trialDays      Int?
   active         Boolean      @default(true)

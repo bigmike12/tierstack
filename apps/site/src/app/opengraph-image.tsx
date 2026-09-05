@@ -65,17 +65,20 @@ async function loadFace(spec: string): Promise<ArrayBuffer> {
  * card in the renderer's default face, not fail to produce one and not produce
  * a half-set one.
  */
-let fontsPromise:
-  | Promise<
-      | {
-          name: string;
-          data: ArrayBuffer;
-          weight: number;
-          style: "normal";
-        }[]
-      | undefined
-    >
-  | null = null;
+/**
+ * The weight is read back off FACES rather than typed as `number`. ImageResponse
+ * takes one of the nine CSS weights, not any number, so widening the literals
+ * here is what makes the whole array unassignable at the call site — and adding
+ * a face to FACES keeps working without touching this.
+ */
+type LoadedFace = {
+  name: string;
+  data: ArrayBuffer;
+  weight: (typeof FACES)[number]["weight"];
+  style: "normal";
+};
+
+let fontsPromise: Promise<LoadedFace[] | undefined> | null = null;
 
 async function loadFonts() {
   if (!fontsPromise) {

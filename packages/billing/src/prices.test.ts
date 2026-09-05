@@ -11,6 +11,7 @@ const base: PriceEconomics = {
   usageUnitAmount: null,
   usageUnitSize: 1,
   includedUnits: null,
+  usageMaxAmount: null,
 };
 
 describe("changedEconomics", () => {

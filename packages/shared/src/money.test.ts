@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addMoney,
   allocate,
+  formatCustomerMoney,
   formatMoney,
   money,
   multiplyMoney,
@@ -91,5 +92,15 @@ describe("money", () => {
 
   it("formats for display", () => {
     expect(formatMoney(money(1_000_000, "NGN"))).toContain("10,000.00");
+  });
+
+  it("formats for a customer with the currency's own symbol", () => {
+    expect(formatCustomerMoney(money(1_000_000, "NGN"))).toBe("₦10,000.00");
+    expect(formatCustomerMoney(money(-50_025, "USD"))).toBe("-$500.25");
+    // The symbol comes from CURRENCIES, not from Intl, which under any single
+    // locale renders some of these as ISO codes and others as symbols.
+    expect(formatCustomerMoney(money(123_400, "KES"))).toBe("KSh1,234.00");
+    expect(formatCustomerMoney(money(123_400, "GHS"))).toBe("GH₵1,234.00");
+    expect(formatCustomerMoney(money(123_400, "ZAR"))).toBe("R1,234.00");
   });
 });

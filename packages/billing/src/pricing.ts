@@ -2,6 +2,7 @@ import {
   BillingError,
   addMoney,
   assertCurrency,
+  formatCustomerMoney,
   money,
   multiplyMoney,
   resolveInterval,
@@ -21,6 +22,27 @@ export type LineItemType =
   | "PRORATION"
   | "TAX";
 
+/**
+ * How to read a meter whose units are money rather than things.
+ *
+ * A percentage fee — "2.5% of payment volume" — is expressed with the ordinary
+ * block machinery: meter the volume, then charge `usageUnitAmount` per
+ * `usageUnitSize` units, choosing the pair so the ratio is the rate. At 2.5%
+ * that is ₦1 per 40 naira of volume. The arithmetic needs nothing new; only the
+ * invoice line does, because "85,000 × 40" is not how anyone reads a percentage.
+ *
+ * `unitScale` is what stops that rendering being a guess: it says how many minor
+ * units one metered unit is worth, so a meter counting naira (100) and one
+ * counting kobo (1) both describe themselves correctly. Meter in the major unit
+ * unless you have a reason not to — `UsageEvent.units` is an int4 column, so a
+ * kobo-denominated meter overflows on a single payment above ₦21.5m.
+ */
+export interface UsageDisplay {
+  kind: "PERCENTAGE";
+  /** Minor units one metered unit represents. Naira-denominated meters use 100. */
+  unitScale: number;
+}
+
 /** The subset of a Price row the pricing calculations need. */
 export interface PriceSnapshot {
   id: string;
@@ -36,7 +58,28 @@ export interface PriceSnapshot {
   usageUnitAmount?: number | null;
   usageUnitSize?: number | null;
   includedUnits?: number | null;
+  /** Ceiling on the metered charge for one billing period, in minor units. */
+  usageMaxAmount?: number | null;
   trialDays?: number | null;
+  /** Presentation only — see UsageDisplay. Never affects an amount. */
+  usageDisplay?: UsageDisplay | null;
+}
+
+/**
+ * Reads `usageDisplay` out of a price's metadata.
+ *
+ * Returns null rather than throwing on anything malformed. This runs inside the
+ * renewal transaction, and a display hint is not worth failing an invoice over:
+ * a bad value costs you the nicer description and nothing else, because every
+ * amount is computed from usageUnitAmount and usageUnitSize either way.
+ */
+export function parseUsageDisplay(value: unknown): UsageDisplay | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as { kind?: unknown; unitScale?: unknown };
+  if (candidate.kind !== "PERCENTAGE") return null;
+  const scale = candidate.unitScale;
+  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 1) return null;
+  return { kind: "PERCENTAGE", unitScale: scale };
 }
 
 export interface ComputedLine {
@@ -180,6 +223,46 @@ export function buildUsageLines(input: UsageLineInput): ComputedLine[] {
   const units = input.unitLabel ?? "units";
   const window = `${input.periodStart.toISOString().slice(0, 10)} – ${input.periodEnd.toISOString().slice(0, 10)}`;
 
+  // Percentage prices describe the same numbers differently: the meter counts
+  // money, so units are rendered as money and the block ratio as a rate. Only
+  // `description` and `metadata` change — quantity, unitAmount and amount stay
+  // exactly what the block arithmetic produced, so nothing reconciling an
+  // invoice against the meter has to know this branch exists.
+  const percentage = price.usageDisplay?.kind === "PERCENTAGE" ? price.usageDisplay : null;
+  const unitScale = percentage?.unitScale ?? 1;
+  // The symbol form, not the ISO one: this string ends up on an invoice a
+  // customer reads, and the dashboard already renders the amount column with a
+  // symbol — two conventions in one table row is worse than either alone.
+  const asMoney = (metered: number): string =>
+    formatCustomerMoney(money(metered * unitScale, currency));
+  const percentageRate = rate / (blockSize * unitScale);
+
+  // The cap applies to one billing period, which is the window this line covers.
+  const uncapped = blocks * rate;
+  const cap = price.usageMaxAmount ?? null;
+  const charged = cap === null ? uncapped : Math.min(uncapped, Math.max(cap, 0));
+  const capped = charged < uncapped;
+
+  const describeOverage = (): string => {
+    const base = !percentage
+      ? blockSize === 1
+        ? `${input.meterName} — ${overage.toLocaleString()} ${units} over the allowance`
+        : `${input.meterName} — ${overage.toLocaleString()} ${units} over the allowance, billed as ${blocks} × ${blockSize.toLocaleString()}`
+      : // The rate is quoted against the volume it was actually applied to, so
+        // the merchant can check the multiplication without having to know the
+        // allowance was subtracted first.
+        included > 0
+        ? `${input.meterName} — ${formatPercentageRate(percentageRate)} of ${asMoney(overage)} above the ${asMoney(included)} included`
+        : `${input.meterName} — ${formatPercentageRate(percentageRate)} of ${asMoney(overage)}`;
+
+    // Naming the amount the cap replaced is the whole point of saying anything:
+    // an invoice that only shows the ceiling looks identical whether the cap
+    // saved the customer ₦20 or ₦2,000,000.
+    return capped
+      ? `${base} — capped at ${formatCustomerMoney(money(charged, currency))}, from ${formatCustomerMoney(money(uncapped, currency))} (${window})`
+      : `${base} (${window})`;
+  };
+
   const lines: ComputedLine[] = [];
 
   // A zero-value line documenting what the allowance absorbed. Without it an
@@ -188,7 +271,9 @@ export function buildUsageLines(input: UsageLineInput): ComputedLine[] {
   if (included > 0) {
     lines.push({
       type: "USAGE",
-      description: `${input.meterName} — ${used.toLocaleString()} ${units} used, ${included.toLocaleString()} included (${window})`,
+      description: percentage
+        ? `${input.meterName} — ${asMoney(used)} processed, ${asMoney(included)} included (${window})`
+        : `${input.meterName} — ${used.toLocaleString()} ${units} used, ${included.toLocaleString()} included (${window})`,
       quantity: Math.min(used, included),
       unitAmount: 0,
       amount: 0,
@@ -202,17 +287,26 @@ export function buildUsageLines(input: UsageLineInput): ComputedLine[] {
   if (overage > 0 && rate > 0) {
     lines.push({
       type: "OVERAGE",
-      description:
-        blockSize === 1
-          ? `${input.meterName} — ${overage.toLocaleString()} ${units} over the allowance (${window})`
-          : `${input.meterName} — ${overage.toLocaleString()} ${units} over the allowance, billed as ${blocks} × ${blockSize.toLocaleString()} (${window})`,
-      quantity: blocks,
-      unitAmount: rate,
-      amount: blocks * rate,
+      description: describeOverage(),
+      // A capped line is one charge, not a block count: `quantity × unitAmount`
+      // has to equal `amount` or every invoice total that re-derives itself
+      // from the columns disagrees with the line. The blocks that were actually
+      // consumed are still in metadata, which is where anything reconciling
+      // against the meter should read them from anyway.
+      quantity: capped ? 1 : blocks,
+      unitAmount: capped ? charged : rate,
+      amount: charged,
       currency,
       periodStart: input.periodStart,
       periodEnd: input.periodEnd,
-      metadata: { meter: price.usageMeterCode ?? null, overage, blocks, blockSize },
+      metadata: {
+        meter: price.usageMeterCode ?? null,
+        overage,
+        blocks,
+        blockSize,
+        ...(percentage ? { percentageRate, volume: overage * percentage.unitScale } : {}),
+        ...(capped ? { cap, uncappedAmount: uncapped } : {}),
+      },
     });
   }
 
@@ -251,6 +345,22 @@ export function describePriceInterval(price: PriceSnapshot): string {
     return { day: "daily", week: "weekly", month: "monthly", year: "annually" }[unit] ?? `every ${unit}`;
   }
   return `every ${intervalCount} ${unit}s`;
+}
+
+/**
+ * A block ratio as a percentage: 1/40 reads "2.5%".
+ *
+ * Four decimal places is enough to render any rate anyone quotes (2.5%, 1.95%,
+ * 0.5%) without a rate like 1/3 printing seventeen digits. Trailing zeros are
+ * trimmed so 2% is not "2.0000%". toFixed always emits the decimal point, so
+ * stripping trailing zeros can never reach the integer digits.
+ */
+function formatPercentageRate(fraction: number): string {
+  const trimmed = (fraction * 100)
+    .toFixed(4)
+    .replace(/0+$/, "")
+    .replace(/\.$/, "");
+  return `${trimmed}%`;
 }
 
 function requireUnitAmount(price: PriceSnapshot): number {

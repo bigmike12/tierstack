@@ -126,6 +126,15 @@ export interface Price {
   usageUnitAmount?: number | null;
   usageUnitSize?: number | null;
   includedUnits?: number | null;
+  /** Ceiling on the metered charge for one billing period. Null means uncapped. */
+  usageMaxAmount?: number | null;
+  /**
+   * Free-form, and the dashboard only reads one key out of it: `usageDisplay`,
+   * which tells the invoice a metered price is a percentage of money rather
+   * than a count of things. Everything else here belongs to whoever set it
+   * through the API, so the price form carries it through untouched.
+   */
+  metadata?: Record<string, unknown> | null;
   plan?: { id: string; code: string; name: string };
 }
 

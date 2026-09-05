@@ -134,6 +134,9 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
                               {price.includedUnits
                                 ? ` · ${price.includedUnits.toLocaleString()} included`
                                 : ""}
+                              {price.usageMaxAmount !== null && price.usageMaxAmount !== undefined
+                                ? ` · max ${formatAmount(price.usageMaxAmount, price.currency)}`
+                                : ""}
                             </span>
                           </>
                         ) : (

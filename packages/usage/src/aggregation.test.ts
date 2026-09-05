@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { aggregate, assertAggregation } from "./aggregation";
-import { billableBlocks, computeQuota } from "./quota";
+import { billableBlocks, cappedFee, computeQuota } from "./quota";
 
 const at = (iso: string) => new Date(iso);
 
@@ -88,5 +88,18 @@ describe("quota", () => {
   it("defaults to per-unit pricing when no block size is set", () => {
     expect(billableBlocks(37, null)).toBe(37);
     expect(billableBlocks(37, 1)).toBe(37);
+  });
+
+  it("holds a fee at its ceiling and leaves a smaller one alone", () => {
+    expect(cappedFee(20_000_000, 5_000_000)).toBe(5_000_000);
+    expect(cappedFee(400_000, 5_000_000)).toBe(400_000);
+    expect(cappedFee(5_000_000, 5_000_000)).toBe(5_000_000);
+  });
+
+  it("treats no cap as no ceiling, and a nonsense one as zero", () => {
+    expect(cappedFee(20_000_000, null)).toBe(20_000_000);
+    expect(cappedFee(20_000_000, undefined)).toBe(20_000_000);
+    expect(cappedFee(20_000_000, 0)).toBe(0);
+    expect(cappedFee(20_000_000, -1)).toBe(0);
   });
 });
