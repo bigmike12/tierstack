@@ -226,6 +226,30 @@ export function formatMoney(a: Money, locale = "en-US"): string {
 }
 
 /**
+ * A charge held down to a ceiling. Null or undefined means uncapped.
+ *
+ * Minor units rather than `Money` because both callers are currency-free at the
+ * point they need this: a usage snapshot carries no currency — the price and the
+ * invoice one layer up own that — and the invoice line has already resolved its
+ * own. Forcing a `Money` here would mean inventing a currency in the one place
+ * that deliberately does not have one.
+ *
+ * It lives with the money helpers rather than beside the quota arithmetic
+ * because it *is* money: quota.ts is unit-only by design, so that a number means
+ * the same thing to the entitlement engine as it does to an invoice. Both the
+ * dashboard's snapshot and the invoice line call this, and a cap that two code
+ * paths round differently is an invoice disagreeing with the screen that
+ * promised it.
+ *
+ * A negative cap is treated as zero rather than rejected: it is nonsense either
+ * way, and a caller reaching this point is already building an invoice.
+ */
+export function cappedFee(amount: number, cap: number | null | undefined): number {
+  if (cap === null || cap === undefined) return amount;
+  return Math.min(amount, Math.max(cap, 0));
+}
+
+/**
  * Money as a customer expects to see it: ₦5,000.00, not NGN 5,000.00.
  *
  * `formatMoney` above renders an ISO code, which is right for a dashboard where

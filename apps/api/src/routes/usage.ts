@@ -2,7 +2,7 @@ import { lookupCustomer } from "@tierstack/billing";
 import type { PrismaClient } from "@tierstack/database";
 import { EntitlementCache } from "@tierstack/entitlements";
 import { BillingError, paginated, parsePageQuery, searchFilter, success } from "@tierstack/shared";
-import { createMeter, listCustomerUsage, trackUsage, updateMeter } from "@tierstack/usage";
+import { createMeter, listCustomerUsage, MAX_UNITS, trackUsage, updateMeter } from "@tierstack/usage";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireActor, requireOrganization, requireRole, requireSecretKeyOrUser } from "../context";
@@ -13,7 +13,9 @@ import type { RedisClient } from "../lib/redis";
 const trackSchema = z.object({
   customerId: z.string().min(1),
   meter: z.string().min(1),
-  units: z.number().int().min(0),
+  // Bounded here as well as in trackUsage so the rejection is a schema error
+  // with the field named, not a thrown BillingError deeper in the call.
+  units: z.number().int().min(0).max(MAX_UNITS),
   /** Unique per organization. The same event is never counted twice. */
   eventId: z.string().min(1).max(255),
   timestamp: z.string().datetime().optional(),

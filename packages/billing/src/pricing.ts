@@ -2,6 +2,7 @@ import {
   BillingError,
   addMoney,
   assertCurrency,
+  cappedFee,
   formatCustomerMoney,
   money,
   multiplyMoney,
@@ -238,9 +239,11 @@ export function buildUsageLines(input: UsageLineInput): ComputedLine[] {
   const percentageRate = rate / (blockSize * unitScale);
 
   // The cap applies to one billing period, which is the window this line covers.
+  // Same helper the usage snapshot uses, so the invoice cannot round a cap
+  // differently from the dashboard that quoted it.
   const uncapped = blocks * rate;
   const cap = price.usageMaxAmount ?? null;
-  const charged = cap === null ? uncapped : Math.min(uncapped, Math.max(cap, 0));
+  const charged = cappedFee(uncapped, cap);
   const capped = charged < uncapped;
 
   const describeOverage = (): string => {

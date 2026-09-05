@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addMoney,
   allocate,
+  cappedFee,
   formatCustomerMoney,
   formatMoney,
   money,
@@ -92,6 +93,19 @@ describe("money", () => {
 
   it("formats for display", () => {
     expect(formatMoney(money(1_000_000, "NGN"))).toContain("10,000.00");
+  });
+
+  it("holds a fee at its ceiling and leaves a smaller one alone", () => {
+    expect(cappedFee(20_000_000, 5_000_000)).toBe(5_000_000);
+    expect(cappedFee(400_000, 5_000_000)).toBe(400_000);
+    expect(cappedFee(5_000_000, 5_000_000)).toBe(5_000_000);
+  });
+
+  it("treats no cap as no ceiling, and a nonsense one as zero", () => {
+    expect(cappedFee(20_000_000, null)).toBe(20_000_000);
+    expect(cappedFee(20_000_000, undefined)).toBe(20_000_000);
+    expect(cappedFee(20_000_000, 0)).toBe(0);
+    expect(cappedFee(20_000_000, -1)).toBe(0);
   });
 
   it("formats for a customer with the currency's own symbol", () => {

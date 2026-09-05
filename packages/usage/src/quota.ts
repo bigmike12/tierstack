@@ -56,20 +56,5 @@ export function billableBlocks(overageUnits: number, unitSize: number | null | u
   return Math.ceil(overageUnits / size);
 }
 
-/**
- * The metered charge after a price's ceiling is applied.
- *
- * The cap is per billing period. On a monthly price that is what a merchant
- * means by "capped at ₦50,000 a month"; on any other interval the period is the
- * only reading that does not silently multiply their intent by twelve, so the
- * dashboard names the actual interval rather than saying "month".
- *
- * Like the rounding direction above, this is a pricing decision rather than an
- * invoice detail, so it lives here where it is one line and can be tested. A
- * negative cap is treated as zero rather than rejected: it is nonsense either
- * way, and a caller that reaches this point has already built an invoice.
- */
-export function cappedFee(amount: number, cap: number | null | undefined): number {
-  if (cap === null || cap === undefined) return amount;
-  return Math.min(amount, Math.max(cap, 0));
-}
+// The fee ceiling that pairs with this rounding is `cappedFee` in
+// @tierstack/shared — it works in minor units, and this module is unit-only.
