@@ -315,7 +315,14 @@ export interface UsageSnapshot {
   overage: number;
   exhausted: boolean;
   overageBlocks: number;
+  /** What the overage costs after any cap, or null when the price has no rate. */
   overageAmount: number | null;
+  /** What it would have cost uncapped. Differs from overageAmount only when the cap bit. */
+  uncappedOverageAmount?: number | null;
+  /** The price's ceiling for this period, in minor units. Null means uncapped. */
+  capAmount?: number | null;
+  /** True when the cap actually reduced the charge, not merely that one is set. */
+  capApplied?: boolean;
   period: { start: string; end: string };
 }
 

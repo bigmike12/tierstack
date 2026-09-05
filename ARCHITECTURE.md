@@ -245,6 +245,39 @@ An invoice is immutable once finalized. Corrections are credit notes and
 `CreditLedgerEntry` rows, not edits. Invoice numbers come from a per-org
 `InvoiceCounter` with a configurable prefix, so they are gapless per tenant.
 
+### Percentage fees and the ceiling on them
+
+A percentage fee — "2.5% of payment volume" — is not a fifth pricing model. It
+is the ordinary block machinery with a meter that counts money: charge
+`usageUnitAmount` per `usageUnitSize` units, and choose the pair so the ratio is
+the rate. At 2.5% that is ₦1 per 40 naira of volume.
+
+Only the invoice line needs to know, because "85,000 × 40" is not how anyone
+reads a percentage. `metadata.usageDisplay` carries `{ kind: "PERCENTAGE",
+unitScale }` — how many minor units one metered unit is worth — and
+`buildUsageLines` renders the same numbers as a rate on money. It changes
+`description` and `metadata` only: quantity, unit amount and amount stay exactly
+what the block arithmetic produced, so nothing reconciling an invoice against
+the meter has to know the branch exists. A malformed hint is ignored rather than
+thrown, because a display detail is not worth failing an invoice over.
+
+Meter money in the **major** unit. `UsageEvent.units` is an int4, so a
+kobo-denominated meter overflows on a single payment above ₦21.5m; naira gives
+₦2.1bn of headroom. `trackUsage` and the ingest schema both refuse anything past
+`MAX_UNITS` rather than letting it surface as a Postgres error on insert.
+
+`Price.usageMaxAmount` caps the metered charge **for one billing period** — on a
+monthly price that is what a merchant means by "capped at ₦50,000 a month", and
+on any other interval the period is the only reading that does not silently
+multiply their intent, so the dashboard names the actual interval. `cappedFee`
+in `packages/shared/src/money.ts` is the single implementation, called by both
+the usage snapshot the dashboard reads and the invoice line the customer reads,
+so a cap can never be rounded one way on screen and another on the bill. A
+capped line is written as one charge rather than a block count, so
+`quantity × unitAmount` still equals `amount`; the blocks actually consumed
+survive in `metadata`. The cap sits in `ECONOMIC_FIELDS`, so changing it
+versions the price rather than repricing anyone already subscribed.
+
 ### Plan changes
 
 `changePlan` supports `IMMEDIATE` and `NEXT_PERIOD`. An immediate change
@@ -668,7 +701,7 @@ however convenient it is:
 
 Verified end to end against real infrastructure:
 
-- 230 unit tests; 328 e2e checks against real PostgreSQL and Redis
+- 262 unit tests; 297 e2e checks against real PostgreSQL and Redis
 - the portal driven in a real browser: link → page → checkout → paid → active
 - Paystack, live, 28/28 (`scripts/verify-paystack.ts --renew`): checkout,
   settlement, signed webhook, tenant match, invoice `PAID`, subscription
@@ -691,7 +724,8 @@ Not built yet:
 - Monnify and Flutterwave adapters
 - per-merchant email credentials: today one platform Resend key sends for every
   organization, with per-org sender name and reply-to
-- client SDKs and `/llms.txt`
+- a React client library — the Node and Python SDKs are built, neither is
+  published to a registry yet
 - the platform back-office
 
 ## 19. Running it
