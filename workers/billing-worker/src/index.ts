@@ -13,6 +13,7 @@ import {
   runIdempotencySweep,
   runIncompleteExpiry,
   runPaymentReconciliation,
+  runPlatformMetering,
   runRenewals,
   runSessionSweep,
   runWebhookDeliveries,
@@ -29,6 +30,7 @@ type JobName =
   | "grace-expiry"
   | "incomplete-expiry"
   | "payment-reconciliation"
+  | "platform-metering"
   | "webhook-deliveries"
   | "idempotency-sweep"
   | "session-sweep";
@@ -51,6 +53,9 @@ async function main(): Promise<void> {
       encryptionKey: process.env.ENCRYPTION_KEY,
     },
     environment: process.env.BILLING_ENV === "live" ? "LIVE" : "TEST",
+    // Set only on a deployment that resells itself. Unset everywhere else, and
+    // the volume-metering job below stays a no-op.
+    platformOrganizationId: process.env.PLATFORM_ORGANIZATION_ID || null,
     // eslint-disable-next-line no-console
     log: (message, meta) => console.log(`[billing-worker] ${message}`, meta ?? ""),
   };
@@ -61,6 +66,9 @@ async function main(): Promise<void> {
   const transport = createEmailTransport({ resendApiKey: process.env.RESEND_API_KEY });
   const notifications: NotificationContext = { ...ctx, transport };
   ctx.log("email transport", { provider: transport.kind });
+  if (ctx.platformOrganizationId) {
+    ctx.log("platform billing enabled", { organizationId: ctx.platformOrganizationId });
+  }
 
   const queue = new Queue(QUEUE_NAME, { connection });
 
@@ -87,6 +95,14 @@ async function main(): Promise<void> {
     { pattern: "* * * * *" },
     { name: "webhook-deliveries" }
   );
+  // Volume settles continuously, but it is only ever read when an invoice is
+  // built, so this trades promptness for a tenth of the passes. The lookback
+  // window is a day, so a late run costs nothing but latency.
+  await queue.upsertJobScheduler(
+    "platform-metering",
+    { pattern: "*/15 * * * *" },
+    { name: "platform-metering" }
+  );
   await queue.upsertJobScheduler("idempotency-sweep", { pattern: "0 * * * *" }, { name: "idempotency-sweep" });
   await queue.upsertJobScheduler("session-sweep", { pattern: "0 3 * * *" }, { name: "session-sweep" });
 
@@ -106,6 +122,8 @@ async function main(): Promise<void> {
           return runIncompleteExpiry(ctx);
         case "payment-reconciliation":
           return runPaymentReconciliation(ctx);
+        case "platform-metering":
+          return runPlatformMetering(ctx);
         case "webhook-deliveries":
           return runWebhookDeliveries(ctx);
         case "idempotency-sweep":

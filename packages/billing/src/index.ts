@@ -10,6 +10,7 @@ export * from "./transitions";
 export * from "./customers";
 export * from "./subscriptions";
 export * from "./payments";
+export * from "./platform-metering";
 export * from "./providers";
 export * from "./prices";
 export * from "./portal";

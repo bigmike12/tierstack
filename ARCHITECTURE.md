@@ -670,7 +670,9 @@ and the data. A test key cannot read live rows.
 | `notifications` | every 5 min | sends what the state says a customer should have been told |
 | `grace-expiry` | every 10 min | applies the configured terminal action when grace runs out |
 | `incomplete-expiry` | every 15 min | expires abandoned checkouts and voids their invoices |
-| `reconciliation` | every 10 min | asks the provider about attempts no webhook ever reported |
+| `reconciliation` | every 2 min | asks the provider about attempts no webhook ever reported |
+| `webhook-deliveries` | every minute | sends outbound events to the developer's own endpoints |
+| `platform-metering` | every 15 min | feeds collected volume into a reseller's percentage fee |
 | `idempotency-sweep` | hourly | reclaims expired idempotency records |
 | `session-sweep` | daily 03:00 | reclaims expired sessions |
 | usage rollups | usage-worker | pre-aggregates high-volume meters |
@@ -678,6 +680,52 @@ and the data. A test key cannot read live rows.
 Every job is idempotent and selects on an indexed predicate, so a run that
 finds nothing to do costs one query and a run that overlaps a previous run
 cannot double-charge.
+
+### Metering what the platform collected
+
+A price can say "₦5,000 a month plus 2.5% of volume" — see §7 — but until
+something records the volume, that price bills its base fee and nothing else.
+`platform-metering` is that something, for the one case the platform can answer
+without being told: money it collected itself.
+
+The shape is fixed by the problem rather than chosen. Metering what a
+merchant's own customers pay them is circular — what a customer pays through
+this platform *is* the merchant's subscription invoice, so a percentage of it
+would be a percentage of itself. The volume worth billing is always somebody
+else's: what organization X collected, billed to X by whoever resells this
+platform to them. So one organization — `PLATFORM_ORGANIZATION_ID` — has other
+organizations as its customers, joined by `Customer.externalId`, which already
+means "the subscriber's own identifier in the caller's system".
+
+Nothing about that is creator-specific. A marketplace, a vertical SaaS and a
+payment facilitator all have the same billing relationship; the creator platform
+is one instance of it.
+
+Three properties keep the cross-organization read honest:
+
+- it **only ever writes into the platform organization**, so no merchant's rows
+  move anywhere they were not put
+- **enrolment is explicit**: an organization is metered only when a `Customer`
+  row for it already exists in the platform organization *and* that customer
+  holds a live subscription on a metered price. Neither is created
+  automatically, so nobody is silently opted in to being charged
+- the platform **never meters itself**, because its own collections are the fees
+  it just charged
+
+Like the notifications job it derives rather than emits: a webhook crediting an
+invoice must not hold a row lock while it writes somebody else's usage event.
+Deriving means the job must be safe to run repeatedly, which is what
+`UsageEvent`'s unique `(organizationId, eventId)` buys — the event id **is** the
+`PaymentAttempt` id. That is also why there is no watermark to keep: each pass
+re-reads a day of settled attempts and writes only the missing ones, so a worker
+that was down for six hours catches up on its next tick with nothing to repair.
+
+Two things are deliberately left out rather than guessed. Volume collected in a
+currency the platform's price is not denominated in is **rejected and logged**,
+never converted — a meter holds one scalar, and this engine has no exchange rate
+that belongs in an invoice. And refunds do not reduce volume, because
+`trackUsage` takes no negative units; a refunded payment stays in the period's
+total until that is addressed deliberately.
 
 ## 17. Invariants
 

@@ -12,7 +12,11 @@ import { loadRootEnv } from "@tierstack/shared";
 // Load the monorepo .env before anything reads process.env.
 loadRootEnv();
 
-import { expireGracePeriods, expireIncompleteSubscriptions } from "../packages/billing/src";
+import {
+  expireGracePeriods,
+  expireIncompleteSubscriptions,
+  runPlatformVolumeMetering,
+} from "../packages/billing/src";
 import { requestHash } from "../apps/api/src/plugins/idempotency";
 import { LogEmailTransport } from "../packages/notifications/src";
 import { runDunningRetries } from "../workers/billing-worker/src/jobs";
@@ -2037,6 +2041,167 @@ async function main(): Promise<void> {
   check("provider configuration audited", actions.has("payment_provider.configured"));
   check("billing settings changes audited", actions.has("billing_settings.updated"));
   check("no provider secret leaked into the audit trail", !JSON.stringify(auditRows).includes("whsec_e2e"));
+
+
+  // -- 18. Platform volume metering -------------------------------------------
+  //
+  // The half of a percentage fee the platform can answer on its own: a business
+  // reselling this infrastructure on a revenue share bills "a fixed amount plus
+  // a percentage of volume", and the volume is money this platform collected.
+  // Nothing here is creator-specific — the relationship is a platform
+  // organization whose customers are other organizations, joined by externalId.
+  section("18. Platform volume metering");
+
+  const platform = await app.inject({
+    method: "POST",
+    url: "/v1/auth/register",
+    headers: { "content-type": "application/json" },
+    payload: JSON.stringify({
+      email: `platform+${stamp}@example.test`,
+      name: "Platform Operator",
+      password: "correct-horse-battery-staple",
+      organizationName: `Platform Org ${stamp}`,
+    }),
+  });
+  const platformCookie = `${platform.cookies[0]!.name}=${platform.cookies[0]!.value}`;
+  const platformOrganizationId = platform.json().data.organization.id;
+  const platformKeyResponse = await call("POST", "/v1/api-keys", {
+    headers: { cookie: platformCookie },
+    payload: { name: "platform", type: "SECRET", environment: "TEST" },
+  });
+  const platformKey = platformKeyResponse.body.data.secret;
+  const asPlatform = (extra: Json = {}) => ({ authorization: `Bearer ${platformKey}`, ...extra });
+
+  await call("POST", "/v1/usage-meters", {
+    headers: asPlatform(),
+    payload: { code: "PAYMENT_VOLUME", name: "Payment volume", unitLabel: "naira", aggregation: "SUM" },
+  });
+  await call("POST", "/v1/plans", {
+    headers: asPlatform(),
+    payload: { code: "reseller", name: "Reseller", description: "Fixed fee plus a share of volume" },
+  });
+  // NGN 5,000 a month plus 2.5% of volume (NGN 1 per NGN 40), capped at NGN 50,000.
+  const platformPrice = await call("POST", "/v1/prices", {
+    headers: asPlatform(),
+    payload: {
+      planId: "reseller",
+      code: "reseller_monthly_ngn",
+      currency: "NGN",
+      model: "HYBRID",
+      unitAmount: 500_000,
+      interval: "MONTHLY",
+      usageMeterCode: "PAYMENT_VOLUME",
+      usageUnitAmount: 100,
+      usageUnitSize: 40,
+      usageMaxAmount: 5_000_000,
+      metadata: { usageDisplay: { kind: "PERCENTAGE", unitScale: 100 } },
+    },
+  });
+  check("a fixed-plus-percentage price is created", platformPrice.status === 201, platformPrice.body);
+
+  // The join back to the organization being billed. `externalId` already means
+  // "the subscriber's own identifier in the caller's system"; here the caller is
+  // the platform and the identifier is an organization id. A trial keeps this
+  // setup free of a payment provider — and a trialing reseller is still metered,
+  // because the volume is what its first real invoice will bill for.
+  const enrolment = await call("POST", "/v1/subscriptions", {
+    headers: asPlatform({ "idempotency-key": `plat-${stamp}` }),
+    payload: {
+      customer: { externalId: organizationId, email: `merchant+${stamp}@example.test`, name: "A Merchant" },
+      priceId: "reseller_monthly_ngn",
+      trialDays: 30,
+    },
+  });
+  check("an organization is enrolled as a customer of the platform",
+    enrolment.body.data?.subscription?.status === "TRIALING", enrolment.body);
+
+  // A customer standing for the platform itself. Metering its own collections
+  // would compound — those are the fees it charged for the volume it is about
+  // to charge for again — so it must be skipped rather than counted.
+  await call("POST", "/v1/subscriptions", {
+    headers: asPlatform({ "idempotency-key": `plat-self-${stamp}` }),
+    payload: {
+      customer: { externalId: platformOrganizationId, email: `self+${stamp}@example.test`, name: "Itself" },
+      priceId: "reseller_monthly_ngn",
+      trialDays: 30,
+    },
+  });
+
+  const settledNgn = await prisma.paymentAttempt.findMany({
+    where: { organizationId, status: "SUCCEEDED", currency: "NGN" },
+    select: { id: true, amount: true },
+  });
+  const settledUsd = await prisma.paymentAttempt.count({
+    where: { organizationId, status: "SUCCEEDED", currency: { not: "NGN" } },
+  });
+  check("the merchant has settled payments to meter", settledNgn.length > 0, settledNgn.length);
+
+  const firstPass = await runPlatformVolumeMetering(prisma, { platformOrganizationId });
+  check("only enrolled organizations are considered, never the platform itself",
+    firstPass.considered === 1, firstPass);
+  check("every settled payment is metered once", firstPass.recorded === settledNgn.length, firstPass);
+  check("volume collected in another currency is rejected rather than added to the wrong total",
+    firstPass.rejected.length === settledUsd, { rejected: firstPass.rejected, settledUsd });
+
+  const volumeEvents = await prisma.usageEvent.findMany({
+    where: { organizationId: platformOrganizationId },
+    select: { eventId: true, units: true, metadata: true, timestamp: true },
+  });
+  check("the event is keyed on the payment attempt, so a second pass cannot double-count",
+    volumeEvents.every((e) => settledNgn.some((a) => a.id === e.eventId)), volumeEvents.slice(0, 2));
+  const sampled = volumeEvents.find((e) => e.eventId === settledNgn[0]!.id);
+  check("volume is recorded in major units, not minor ones",
+    sampled?.units === Math.round(settledNgn[0]!.amount / 100), { sampled, attempt: settledNgn[0] });
+  check("the event names the organization the volume came from",
+    (sampled?.metadata as Json)?.sourceOrganizationId === organizationId, sampled?.metadata);
+
+  // Re-reading a day of settled attempts is what replaces a watermark, so the
+  // second pass has to be free. If it is not, a worker restart double-bills.
+  const secondPass = await runPlatformVolumeMetering(prisma, { platformOrganizationId });
+  check("a second pass records nothing", secondPass.recorded === 0, secondPass);
+  check("and recognises every attempt as already metered", secondPass.skipped === settledNgn.length, secondPass);
+  const afterSecondPass = await prisma.usageEvent.count({ where: { organizationId: platformOrganizationId } });
+  check("so the event count is unchanged", afterSecondPass === volumeEvents.length, {
+    before: volumeEvents.length,
+    after: afterSecondPass,
+  });
+
+  // Everything settled so far predates the enrolment, and that is deliberately
+  // visible: usage is read over the window the invoice covers, so a fee is owed
+  // on volume collected while subscribed rather than on everything that ever
+  // happened. The reseller's first period opened seconds ago, so it is empty.
+  const beforeEnrolment = await call("GET", `/v1/usage?customerId=${organizationId}`, { headers: asPlatform() });
+  check("volume collected before enrolment is outside the first period",
+    beforeEnrolment.body.data?.meters?.find((m: Json) => m.meterCode === "PAYMENT_VOLUME")?.used === 0,
+    beforeEnrolment.body.data?.meters);
+
+  // Open the period wide enough to cover the run, rather than minting a payment
+  // to fall inside it: the events under test are the real collections this suite
+  // already made, and moving the window is the honest way to bill for them.
+  const enrolmentSubscriptionId = enrolment.body.data.subscription.id;
+  await prisma.subscription.update({
+    where: { id: enrolmentSubscriptionId },
+    data: { currentPeriodStart: new Date(stamp - 3_600_000) },
+  });
+
+  const inPeriod = await prisma.usageEvent.aggregate({
+    where: { organizationId: platformOrganizationId },
+    _sum: { units: true },
+  });
+  const meteredNaira = inPeriod._sum.units ?? 0;
+  check("there is in-period volume to price", meteredNaira > 0, meteredNaira);
+
+  // The whole point of the exercise: the fee bills itself off the volume, with
+  // the ceiling holding it. Expected values come from the events actually
+  // written rather than from a hard-coded amount, so this asserts the join
+  // rather than restating the fixture.
+  const platformUsage = await call("GET", `/v1/usage?customerId=${organizationId}`, { headers: asPlatform() });
+  const volumeSnapshot = platformUsage.body.data?.meters?.find((m: Json) => m.meterCode === "PAYMENT_VOLUME");
+  check("the platform can see the volume it collected for that organization",
+    volumeSnapshot?.used === meteredNaira, { used: volumeSnapshot?.used, expected: meteredNaira });
+  check("and prices it at 2.5%, or the ceiling, whichever is lower",
+    volumeSnapshot?.overageAmount === Math.min(Math.ceil(meteredNaira / 40) * 100, 5_000_000),
+    volumeSnapshot);
 
   // -- summary ---------------------------------------------------------------
   await app.close();

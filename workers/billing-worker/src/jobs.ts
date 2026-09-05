@@ -7,6 +7,7 @@ import {
   expireIncompleteSubscriptions,
   recordDeliveryAttempt,
   renewSubscription,
+  runPlatformVolumeMetering,
   signOutboundWebhook,
   syncPaymentAttempt,
   type ProviderFactoryDeps,
@@ -18,6 +19,12 @@ export interface JobContext {
   prisma: PrismaClient;
   providerDeps: ProviderFactoryDeps;
   environment: "TEST" | "LIVE";
+  /**
+   * The organization that bills other organizations, when this deployment is
+   * reselling itself. Unset on an ordinary deployment, and the volume-metering
+   * job then does nothing at all.
+   */
+  platformOrganizationId?: string | null;
   log: (message: string, meta?: Record<string, unknown>) => void;
 }
 
@@ -353,6 +360,41 @@ export async function runWebhookDeliveries(ctx: JobContext, now = new Date(), ba
     ctx.log("webhook deliveries ran", { considered: due.length, delivered, retrying, failed });
   }
   return { considered: due.length, delivered, retrying, failed };
+}
+
+/**
+ * Feeds each enrolled organization's collected volume into the meter its own
+ * platform subscription bills against, so a "2.5% of volume" price can bill
+ * itself instead of waiting on someone to post the events.
+ *
+ * Deliberately inert unless this deployment is reselling itself: with no
+ * platform organization configured there is nobody to bill and nothing to
+ * meter, and the job returns without touching the database.
+ */
+export async function runPlatformMetering(ctx: JobContext, now = new Date()) {
+  if (!ctx.platformOrganizationId) return { considered: 0, recorded: 0, skipped: 0, rejected: 0 };
+
+  const result = await runPlatformVolumeMetering(ctx.prisma, {
+    platformOrganizationId: ctx.platformOrganizationId,
+    now,
+  });
+
+  if (result.recorded > 0) {
+    ctx.log("platform volume metered", { considered: result.considered, recorded: result.recorded });
+  }
+  // Rejections are the interesting output: an organization collecting in a
+  // currency its platform price is not denominated in is being under-billed
+  // silently, and nothing else in the system would say so.
+  for (const rejection of result.rejected.slice(0, 10)) {
+    ctx.log("volume could not be metered", rejection);
+  }
+
+  return {
+    considered: result.considered,
+    recorded: result.recorded,
+    skipped: result.skipped,
+    rejected: result.rejected.length,
+  };
 }
 
 /** Idempotency records are short-lived by design; this reclaims the space. */
