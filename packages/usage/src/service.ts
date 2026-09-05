@@ -1,12 +1,15 @@
 import type { PrismaClient, TransactionClient } from "@tierstack/database";
-import { BillingError, newId } from "@tierstack/shared";
+import { BillingError, cappedFee, newId } from "@tierstack/shared";
 import { assertAggregation, type UsageAggregation } from "./aggregation";
-import { billableBlocks, cappedFee, computeQuota, type QuotaResult } from "./quota";
+import { billableBlocks, computeQuota, type QuotaResult } from "./quota";
 
 export interface UsagePeriod {
   start: Date;
   end: Date;
 }
+
+/** The largest value `UsageEvent.units` can hold — it is a PostgreSQL int4. */
+export const MAX_UNITS = 2_147_483_647;
 
 export interface TrackUsageInput {
   organizationId: string;
@@ -41,6 +44,19 @@ export async function trackUsage(
 ): Promise<TrackUsageResult> {
   if (!Number.isInteger(input.units) || input.units < 0) {
     throw new BillingError("VALIDATION_ERROR", "Usage units must be a non-negative integer.");
+  }
+  // `UsageEvent.units` is an int4 column. Without this the overflow surfaces as
+  // a raw Postgres error on insert — a 500 for what is a caller mistake, and one
+  // whose cause is invisible from the response. It bites in exactly one place:
+  // a meter recording money in minor units, where a single ₦21.5m payment is
+  // past the ceiling. Meter money in major units and the limit is ₦21bn, which
+  // is why every surface that offers a percentage fee meters in naira.
+  if (input.units > MAX_UNITS) {
+    throw new BillingError(
+      "VALIDATION_ERROR",
+      `Usage units must be at most ${MAX_UNITS.toLocaleString()}, received ${input.units.toLocaleString()}. ` +
+        "A meter recording money should count major units — naira, not kobo."
+    );
   }
   if (!input.eventId) {
     throw new BillingError("VALIDATION_ERROR", "eventId is required so the event can be de-duplicated.");

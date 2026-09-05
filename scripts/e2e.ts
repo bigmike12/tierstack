@@ -788,6 +788,113 @@ async function main(): Promise<void> {
     afterRenewalQuota.body.data?.access === true && afterRenewalQuota.body.data?.remainingQuota === 100_000,
     afterRenewalQuota.body.data);
 
+  // -- 12da. Percentage pricing and the fee cap ------------------------------
+  section("12da. Percentage pricing and the fee cap");
+
+  // "2.5% of payment volume, capped at NGN 50,000 a period." Expressed with the
+  // ordinary block machinery: NGN 1 per 40 naira of volume is 1/40, and the
+  // meter counts naira rather than kobo because UsageEvent.units is an int4.
+  const volumeMeter = await call("POST", "/v1/usage-meters", {
+    headers: asKey(),
+    payload: { code: "PAYMENT_VOLUME", name: "Payment volume", unitLabel: "naira", aggregation: "SUM" },
+  });
+  check("a money-denominated meter can be created", volumeMeter.status === 201, volumeMeter.body);
+
+  const pctPrice = await call("POST", "/v1/prices", {
+    headers: asKey(),
+    payload: {
+      planId: "pro",
+      code: "volume_fee_ngn",
+      currency: "NGN",
+      unitAmount: 100_000,
+      interval: "MONTHLY",
+      model: "HYBRID",
+      usageMeterCode: "PAYMENT_VOLUME",
+      usageUnitAmount: 100,
+      usageUnitSize: 40,
+      usageMaxAmount: 5_000_000,
+      metadata: { usageDisplay: { kind: "PERCENTAGE", unitScale: 100 } },
+    },
+  });
+  check("a capped percentage price is created", pctPrice.status === 201, pctPrice.body);
+  check("the cap is stored in minor units", pctPrice.body.data?.usageMaxAmount === 5_000_000, pctPrice.body.data);
+
+  const cappedFlat = await call("POST", "/v1/prices", {
+    headers: asKey(),
+    payload: {
+      planId: "pro", code: "capped_flat_ngn", currency: "NGN", unitAmount: 100_000,
+      interval: "MONTHLY", model: "FLAT_RECURRING", usageMaxAmount: 5_000_000,
+    },
+  });
+  check("a cap on a price with no metered charge is refused rather than stored inert",
+    cappedFlat.body.error?.code === "INVALID_REQUEST", cappedFlat.body);
+
+  // The display hint rides in a Json column and the PATCH replaces metadata
+  // wholesale. An edit that says nothing about it must not silently drop it,
+  // or the next invoice reverts to describing a percentage as block arithmetic.
+  const pctRenamed = await call("PATCH", "/v1/prices/volume_fee_ngn", {
+    headers: asKey(),
+    payload: { nickname: "Volume fee" },
+  });
+  const reread = await call("GET", "/v1/prices/volume_fee_ngn", { headers: asKey() });
+  check("an edit that ignores metadata leaves the display hint intact",
+    (reread.body.data?.metadata as Json)?.usageDisplay?.kind === "PERCENTAGE", reread.body.data?.metadata);
+  check("and leaves the cap intact", reread.body.data?.usageMaxAmount === 5_000_000, pctRenamed.body.data);
+
+  const pctSub = await call("POST", "/v1/subscriptions", {
+    headers: asKey({ "idempotency-key": `pct-${stamp}` }),
+    payload: {
+      customer: { externalId: "user_merchant", email: "merchant@example.test", name: "A Merchant" },
+      priceId: "volume_fee_ngn",
+      metadata: { mockOutcome: "SUCCESS" },
+    },
+  });
+  const pctSubId = pctSub.body.data?.subscription?.id;
+  check("the percentage subscription activates", pctSub.body.data?.subscription?.status === "ACTIVE", pctSub.body);
+
+  const overflow = await call("POST", "/v1/events/track", {
+    headers: asKey(),
+    payload: { customerId: "user_merchant", meter: "PAYMENT_VOLUME", units: 3_000_000_000, eventId: `ovf-${stamp}` },
+  });
+  check("units past what the column holds are refused, not left to overflow at insert",
+    overflow.body.error?.code === "VALIDATION_ERROR" &&
+      JSON.stringify(overflow.body.error.details).includes("units"),
+    overflow.body);
+
+  // NGN 8,000,000 of volume. 2.5% is NGN 200,000 — well past the NGN 50,000 cap.
+  const volume = await call("POST", "/v1/events/track", {
+    headers: asKey(),
+    payload: { customerId: "user_merchant", meter: "PAYMENT_VOLUME", units: 8_000_000, eventId: `vol-${stamp}` },
+  });
+  check("volume is recorded in major units", volume.body.data?.recorded === true, volume.body);
+
+  const pctUsage = await call("GET", "/v1/usage?customerId=user_merchant", { headers: asKey() });
+  const volumeUsage = pctUsage.body.data?.meters?.find((m: Json) => m.meterCode === "PAYMENT_VOLUME");
+  check("the snapshot charges the cap, not the raw percentage",
+    volumeUsage?.overageAmount === 5_000_000, volumeUsage);
+  check("and still reports what it would have been", volumeUsage?.uncappedOverageAmount === 20_000_000, volumeUsage);
+  check("and says the cap actually bit", volumeUsage?.capApplied === true, volumeUsage);
+
+  const pctRenewal = await call("POST", `/v1/subscriptions/${pctSubId}/renew`, {
+    headers: asKey(),
+    payload: {},
+  });
+  const pctInvoice = await call("GET", `/v1/invoices/${pctRenewal.body.data.invoiceId}`, { headers: asKey() });
+  const pctOverage = pctInvoice.body.data.lineItems.find((l: Json) => l.type === "OVERAGE");
+
+  check("the cap survives the whole path onto the invoice", pctOverage?.amount === 5_000_000, pctOverage);
+  check("the line reads as a percentage of money, not as blocks",
+    typeof pctOverage?.description === "string" && pctOverage.description.includes("2.5% of ₦8,000,000.00"),
+    pctOverage?.description);
+  check("and names the amount the cap replaced",
+    pctOverage?.description.includes("capped at ₦50,000.00") &&
+      pctOverage.description.includes("from ₦200,000.00"),
+    pctOverage?.description);
+  check("a capped line still multiplies out to its own amount",
+    pctOverage?.quantity * pctOverage?.unitAmount === pctOverage?.amount, pctOverage);
+  check("the blocks actually consumed survive in metadata",
+    (pctOverage?.metadata as Json)?.blocks === 200_000, pctOverage?.metadata);
+
   // -- 12e. Editing a price ---------------------------------------------------
   section("12e. Editing a price");
 
